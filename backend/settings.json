@@ -1,0 +1,41 @@
+{
+  "profile": {
+    "name": "Dr. Admin",
+    "email": "admin@hospital.ai",
+    "role": "Admin",
+    "session_timeout": 30,
+    "two_factor": false
+  },
+  "realtime": {
+    "enabled": true,
+    "refresh_interval": 10,
+    "sla_threshold": 80,
+    "burnout_threshold": 60,
+    "surge_sensitivity": 70,
+    "simulation_enabled": true,
+    "ai_enabled": true
+  },
+  "alerts": {
+    "sound": true,
+    "visual": true,
+    "email": false,
+    "severity_filter": "all",
+    "critical_only": false
+  },
+  "ai_model": {
+    "forecast_model": "ARIMA",
+    "confidence_threshold": 85,
+    "optimization_mode": "Balanced",
+    "explainable_ai": true
+  },
+  "appearance": {
+    "theme": "dark",
+    "compact_mode": false,
+    "animation_speed": 100,
+    "accent_color": "#14B8A6"
+  },
+  "security": {
+    "ip_restriction": false,
+    "api_key": "hip-2026-xxxx-xxxx-abcd"
+  }
+}

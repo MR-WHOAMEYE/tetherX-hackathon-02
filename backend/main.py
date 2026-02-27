@@ -6,7 +6,7 @@ from database import engine, Base
 from routers import (
     dashboard, workload, sla, predictive, root_cause,
     digital_twin, simulation, optimization, sentiment,
-    alerts, strategic, financial, assistant, reports
+    alerts, strategic, financial, assistant, reports, settings
 )
 
 # Create tables
@@ -42,6 +42,7 @@ app.include_router(strategic.router)
 app.include_router(financial.router)
 app.include_router(assistant.router)
 app.include_router(reports.router)
+app.include_router(settings.router)
 
 
 @app.get("/")
