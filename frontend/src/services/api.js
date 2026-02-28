@@ -56,6 +56,7 @@ export const simulateScenario = (params) => api.post('/strategic/simulate', para
 
 // Financial
 export const getFinancialImpact = () => api.get('/financial/impact');
+export const simulateROI = (params) => api.post('/financial/simulate-roi', params);
 
 // Assistant
 export const queryAssistant = (query) => api.post('/assistant/query', { query });
