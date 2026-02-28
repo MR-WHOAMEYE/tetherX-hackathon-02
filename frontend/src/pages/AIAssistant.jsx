@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { MessageSquare, Send, Bot, User } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { queryAssistant } from '../services/api';
@@ -65,7 +66,9 @@ export default function AIAssistant() {
                             <div className={`max-w-[70%] ${msg.role === 'user'
                                 ? 'bg-primary text-white rounded-2xl rounded-br-md px-4 py-3'
                                 : 'bg-surface rounded-2xl rounded-bl-md px-4 py-3'}`}>
-                                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                                <div className="text-sm markdown-chat">
+                                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                </div>
                                 {msg.insight && (
                                     <p className="text-xs mt-2 opacity-70 italic">💡 {msg.insight}</p>
                                 )}
