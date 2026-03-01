@@ -1,15 +1,12 @@
 """
 Patient-facing API — appointments, cases, feedback, booking, profile.
-Uses SQLite for existing data + MongoDB for bookings & profiles.
+Uses MongoDB only — no SQLite mock data.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from pymongo import MongoClient
 from bson import ObjectId
-from sqlalchemy.orm import Session
-from database import get_db
-from models import Case, Appointment, Feedback, Staff
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -25,6 +22,9 @@ bookings_col = mdb["appointment_bookings"] if mdb is not None else None
 profiles_col = mdb["patient_profiles"] if mdb is not None else None
 prescriptions_col = mdb["prescriptions"] if mdb is not None else None
 diagnoses_col = mdb["diagnoses"] if mdb is not None else None
+admissions_col = mdb["ward_admissions"] if mdb is not None else None
+feedback_col = mdb["patient_feedback"] if mdb is not None else None
+users_col = mdb["users"] if mdb is not None else None
 
 
 # ---- Models ----
@@ -50,91 +50,135 @@ class FeedbackSubmit(BaseModel):
     rating: int
 
 
-# ---- SQLite endpoints ----
+# ---- Appointments (from bookings) ----
 @router.get("/appointments")
-def get_appointments(department: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(Appointment)
+def get_appointments(department: Optional[str] = None):
+    if bookings_col is None:
+        return {"appointments": [], "total": 0, "attended": 0, "missed": 0}
+
+    query = {}
     if department:
-        query = query.filter(Appointment.department == department)
-    appointments = query.order_by(Appointment.slot_time.desc()).all()
+        query["department"] = department
+    results = list(bookings_col.find(query).sort("created_at", -1))
+
+    attended = sum(1 for r in results if r.get("status") in ("approve", "approved", "completed"))
+    missed = sum(1 for r in results if r.get("status") in ("cancel", "cancelled", "no_show"))
+
     return {
         "appointments": [
-            {"id": a.appointment_id, "department": a.department,
-             "slot_time": a.slot_time.isoformat() if a.slot_time else None, "attended": a.attended_flag}
-            for a in appointments
+            {
+                "id": str(r["_id"]),
+                "department": r.get("department", ""),
+                "slot_time": r.get("preferred_date", "") + " " + r.get("preferred_time", ""),
+                "attended": r.get("status") in ("approve", "approved", "completed"),
+            }
+            for r in results
         ],
-        "total": len(appointments),
-        "attended": sum(1 for a in appointments if a.attended_flag),
-        "missed": sum(1 for a in appointments if not a.attended_flag),
+        "total": len(results),
+        "attended": attended,
+        "missed": missed,
     }
 
 
+# ---- Cases (from admissions) ----
 @router.get("/cases")
-def get_cases(department: Optional[str] = None, staff_id: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(Case)
+def get_cases(department: Optional[str] = None, staff_id: Optional[int] = None):
+    if admissions_col is None:
+        return {"cases": [], "total": 0, "open": 0, "in_progress": 0, "resolved": 0, "escalated": 0}
+
+    query = {}
     if department:
-        query = query.filter(Case.department == department)
-    if staff_id:
-        query = query.filter(Case.staff_id == staff_id)
-    cases = query.order_by(Case.created_time.desc()).all()
+        query["department"] = department
+
+    results = list(admissions_col.find(query).sort("created_at", -1))
     return {
         "cases": [
-            {"id": c.case_id, "department": c.department, "severity": c.severity, "status": c.status,
-             "staff_id": c.staff_id,
-             "created_time": c.created_time.isoformat() if c.created_time else None,
-             "resolved_time": c.resolved_time.isoformat() if c.resolved_time else None,
-             "sla_deadline": c.sla_deadline.isoformat() if c.sla_deadline else None}
-            for c in cases
+            {
+                "id": str(c["_id"]),
+                "department": c.get("department", ""),
+                "severity": c.get("ward_type", "General"),
+                "status": c.get("status", ""),
+                "patient_name": c.get("patient_name", ""),
+                "created_time": c.get("created_at", ""),
+            }
+            for c in results
         ],
-        "total": len(cases),
-        "open": sum(1 for c in cases if c.status == "Open"),
-        "in_progress": sum(1 for c in cases if c.status == "In Progress"),
-        "resolved": sum(1 for c in cases if c.status == "Resolved"),
-        "escalated": sum(1 for c in cases if c.status == "Escalated"),
+        "total": len(results),
+        "open": sum(1 for c in results if c.get("status") == "pending"),
+        "in_progress": sum(1 for c in results if c.get("status") == "admitted"),
+        "resolved": sum(1 for c in results if c.get("status") == "discharged"),
+        "escalated": sum(1 for c in results if c.get("status") == "escalated"),
     }
 
 
+# ---- Feedback ----
 @router.get("/feedback")
-def get_feedback(department: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(Feedback)
+def get_feedback(department: Optional[str] = None):
+    if feedback_col is None:
+        return {"feedback": [], "total": 0, "avg_rating": 0, "avg_sentiment": 0}
+
+    query = {}
     if department:
-        query = query.filter(Feedback.department == department)
-    feedbacks = query.all()
-    avg_rating = sum(f.rating for f in feedbacks) / len(feedbacks) if feedbacks else 0
-    avg_sentiment = sum(f.sentiment_score for f in feedbacks) / len(feedbacks) if feedbacks else 0
+        query["department"] = department
+    feedbacks = list(feedback_col.find(query))
+
+    avg_rating = sum(f.get("rating", 0) for f in feedbacks) / len(feedbacks) if feedbacks else 0
+    avg_sentiment = sum(f.get("sentiment_score", 0) for f in feedbacks) / len(feedbacks) if feedbacks else 0
+
     return {
         "feedback": [
-            {"id": f.feedback_id, "department": f.department, "text": f.feedback_text,
-             "rating": f.rating, "sentiment_score": f.sentiment_score}
+            {
+                "id": str(f["_id"]),
+                "department": f.get("department", ""),
+                "text": f.get("feedback_text", ""),
+                "rating": f.get("rating", 0),
+                "sentiment_score": f.get("sentiment_score", 0),
+            }
             for f in feedbacks
         ],
-        "total": len(feedbacks), "avg_rating": round(avg_rating, 2), "avg_sentiment": round(avg_sentiment, 3),
+        "total": len(feedbacks),
+        "avg_rating": round(avg_rating, 2),
+        "avg_sentiment": round(avg_sentiment, 3),
     }
 
 
 @router.post("/feedback")
-def submit_feedback(body: FeedbackSubmit, db: Session = Depends(get_db)):
-    max_id = db.query(Feedback.feedback_id).order_by(Feedback.feedback_id.desc()).first()
-    new_id = (max_id[0] + 1) if max_id else 1
+def submit_feedback(body: FeedbackSubmit):
+    if feedback_col is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
     sentiment = (body.rating - 3) / 2.0
-    fb = Feedback(feedback_id=new_id, department=body.department,
-                  feedback_text=body.feedback_text, rating=body.rating, sentiment_score=sentiment)
-    db.add(fb)
-    db.commit()
-    return {"message": "Feedback submitted", "id": new_id}
+    doc = {
+        "department": body.department,
+        "feedback_text": body.feedback_text,
+        "rating": body.rating,
+        "sentiment_score": sentiment,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    result = feedback_col.insert_one(doc)
+    return {"message": "Feedback submitted", "id": str(result.inserted_id)}
 
 
+# ---- Staff (from users) ----
 @router.get("/staff")
-def get_staff(department: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(Staff)
+def get_staff(department: Optional[str] = None):
+    if users_col is None:
+        return {"staff": [], "total": 0}
+
+    query = {"role": {"$in": ["doctor", "nurse"]}}
     if department:
-        query = query.filter(Staff.department == department)
-    staff = query.all()
+        query["department"] = department
+    staff = list(users_col.find(query))
+
     return {
         "staff": [
-            {"id": s.staff_id, "name": s.name, "department": s.department,
-             "shift_hours": s.shift_hours, "cases_handled": s.cases_handled,
-             "avg_resolution_time": s.avg_resolution_time, "overtime_hours": s.overtime_hours}
+            {
+                "id": str(s["_id"]),
+                "name": s.get("name", ""),
+                "department": s.get("department", ""),
+                "role": s.get("role", ""),
+                "email": s.get("email", ""),
+            }
             for s in staff
         ],
         "total": len(staff),

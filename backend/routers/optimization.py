@@ -1,29 +1,41 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from database import get_db
-from models import Case, Staff
+"""
+Optimization Engine — staffing allocation and resource recommendations.
+Uses MongoDB only — no SQLite mock data.
+"""
+from fastapi import APIRouter
+from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter(prefix="/api/optimization", tags=["Optimization Engine"])
+
+# MongoDB
+MONGO_URI = os.getenv("mongo_db", "")
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
+mdb = client["zero_intercept"] if client is not None else None
+admissions_col = mdb["ward_admissions"] if mdb is not None else None
+users_col = mdb["users"] if mdb is not None else None
+bookings_col = mdb["appointment_bookings"] if mdb is not None else None
 
 
 @router.get("/recommend")
-def optimization_recommendations(db: Session = Depends(get_db)):
+def optimization_recommendations():
     """Generate optimal staffing allocation and resource optimization suggestions."""
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     recommendations = []
 
-    total_staff = db.query(func.count(Staff.staff_id)).scalar()
-    total_active = db.query(func.count(Case.case_id)).filter(
-        Case.status.in_(["Open", "In Progress"])
-    ).scalar()
+    total_staff = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
+    total_active = admissions_col.count_documents({"status": {"$in": ["admitted", "pending"]}}) if admissions_col is not None else 0
 
     for dept in departments:
-        staff_count = db.query(func.count(Staff.staff_id)).filter(Staff.department == dept).scalar()
-        active = db.query(func.count(Case.case_id)).filter(
-            Case.department == dept, Case.status.in_(["Open", "In Progress"])
-        ).scalar()
-        avg_overtime = db.query(func.avg(Staff.overtime_hours)).filter(Staff.department == dept).scalar() or 0
+        staff_count = users_col.count_documents({
+            "department": dept, "role": {"$in": ["doctor", "nurse"]}
+        }) if users_col is not None else 0
+
+        active = admissions_col.count_documents({
+            "department": dept, "status": {"$in": ["admitted", "pending"]}
+        }) if admissions_col is not None else 0
 
         # Calculate optimal staff
         cases_per_staff = active / max(staff_count, 1)
@@ -31,17 +43,31 @@ def optimization_recommendations(db: Session = Depends(get_db)):
         optimal_staff = max(1, round(active / optimal_ratio))
         staff_gap = optimal_staff - staff_count
 
-        # Delay risk
-        resolved = db.query(Case).filter(
-            Case.department == dept, Case.status == "Resolved", Case.resolved_time.isnot(None)
-        ).all()
-        if resolved:
-            avg_res = sum((c.resolved_time - c.created_time).total_seconds() / 3600 for c in resolved) / len(resolved)
-            sla_met = sum(1 for c in resolved if c.resolved_time <= c.sla_deadline)
-            sla_rate = sla_met / len(resolved) * 100
-        else:
-            avg_res = 0
-            sla_rate = 100
+        # SLA from bookings
+        avg_res = 0
+        sla_rate = 100
+        if bookings_col is not None:
+            from datetime import datetime
+            responded = list(bookings_col.find({
+                "department": dept,
+                "responded_at": {"$ne": None},
+                "created_at": {"$ne": None},
+                "sla_deadline": {"$ne": None},
+            }))
+            if responded:
+                total_hrs = 0
+                sla_met = 0
+                for b in responded:
+                    try:
+                        c_time = datetime.fromisoformat(b["created_at"])
+                        r_time = datetime.fromisoformat(b["responded_at"])
+                        total_hrs += (r_time - c_time).total_seconds() / 3600
+                        if b["responded_at"] <= b["sla_deadline"]:
+                            sla_met += 1
+                    except (ValueError, TypeError):
+                        pass
+                avg_res = total_hrs / len(responded)
+                sla_rate = sla_met / len(responded) * 100
 
         priority = "High" if staff_gap > 2 or sla_rate < 80 else "Medium" if staff_gap > 0 else "Low"
 
@@ -52,7 +78,7 @@ def optimization_recommendations(db: Session = Depends(get_db)):
             "staff_gap": staff_gap,
             "active_cases": active,
             "cases_per_staff": round(cases_per_staff, 1),
-            "avg_overtime_hrs": round(avg_overtime, 1),
+            "avg_overtime_hrs": 0,  # not tracked in MongoDB users
             "avg_resolution_hrs": round(avg_res, 2),
             "sla_compliance_pct": round(sla_rate, 1),
             "priority": priority,
@@ -62,14 +88,6 @@ def optimization_recommendations(db: Session = Depends(get_db)):
 
     # Global suggestions
     suggestions = []
-    high_overtime = db.query(Staff).filter(Staff.overtime_hours > 10).all()
-    if high_overtime:
-        suggestions.append({
-            "type": "Overtime Reduction",
-            "description": f"{len(high_overtime)} staff members have >10hrs overtime. Consider redistributing cases.",
-            "impact": "High",
-            "estimated_improvement": "15-25% reduction in burnout risk"
-        })
 
     unbalanced = [r for r in recommendations if abs(r["staff_gap"]) > 2]
     if unbalanced:
@@ -78,6 +96,15 @@ def optimization_recommendations(db: Session = Depends(get_db)):
             "description": f"{len(unbalanced)} departments have significant staffing gaps.",
             "impact": "High",
             "estimated_improvement": "10-20% improvement in SLA compliance"
+        })
+
+    high_load = [r for r in recommendations if r["cases_per_staff"] > 8]
+    if high_load:
+        suggestions.append({
+            "type": "Workload Reduction",
+            "description": f"{len(high_load)} departments have high case-per-staff ratios (>8).",
+            "impact": "High",
+            "estimated_improvement": "15-25% reduction in burnout risk"
         })
 
     suggestions.append({

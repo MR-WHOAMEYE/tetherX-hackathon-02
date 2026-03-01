@@ -1,12 +1,24 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+"""
+Simulation Lab — staffing changes and outcome prediction.
+Uses MongoDB only — no SQLite mock data.
+"""
+from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
-from database import get_db
-from models import Case, Staff
+from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter(prefix="/api/simulation", tags=["Simulation Lab"])
+
+# MongoDB
+MONGO_URI = os.getenv("mongo_db", "")
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
+mdb = client["zero_intercept"] if client is not None else None
+admissions_col = mdb["ward_admissions"] if mdb is not None else None
+users_col = mdb["users"] if mdb is not None else None
+bookings_col = mdb["appointment_bookings"] if mdb is not None else None
 
 
 class SimulationParams(BaseModel):
@@ -18,29 +30,54 @@ class SimulationParams(BaseModel):
 
 
 @router.post("/run")
-def run_simulation(params: SimulationParams, db: Session = Depends(get_db)):
+def run_simulation(params: SimulationParams):
     """Simulate staffing changes and predict outcomes."""
     dept = params.department
 
-    # Current metrics
-    current_staff = db.query(func.count(Staff.staff_id)).filter(Staff.department == dept).scalar()
-    active_cases = db.query(func.count(Case.case_id)).filter(
-        Case.department == dept, Case.status.in_(["Open", "In Progress"])
-    ).scalar()
-    total_cases = db.query(func.count(Case.case_id)).filter(Case.department == dept).scalar()
-    resolved = db.query(Case).filter(
-        Case.department == dept, Case.status == "Resolved", Case.resolved_time.isnot(None)
-    ).all()
-    avg_res = sum((c.resolved_time - c.created_time).total_seconds() / 3600 for c in resolved) / len(resolved) if resolved else 8
+    # Current staff from users
+    current_staff = users_col.count_documents({
+        "department": dept, "role": {"$in": ["doctor", "nurse"]}
+    }) if users_col is not None else 5
 
-    sla_met = sum(1 for c in resolved if c.resolved_time <= c.sla_deadline)
-    sla_rate = sla_met / len(resolved) * 100 if resolved else 80
+    # Active cases from admissions
+    active_cases = admissions_col.count_documents({
+        "department": dept, "status": {"$in": ["admitted", "pending"]}
+    }) if admissions_col is not None else 10
+
+    total_cases = admissions_col.count_documents({
+        "department": dept
+    }) if admissions_col is not None else 20
+
+    # Estimate resolution metrics from bookings
+    avg_res = 8  # default
+    sla_rate = 80  # default
+    if bookings_col is not None:
+        from datetime import datetime
+        responded = list(bookings_col.find({
+            "department": dept,
+            "responded_at": {"$ne": None},
+            "created_at": {"$ne": None},
+            "sla_deadline": {"$ne": None},
+        }))
+        if responded:
+            total_hrs = 0
+            sla_met = 0
+            for b in responded:
+                try:
+                    c_time = datetime.fromisoformat(b["created_at"])
+                    r_time = datetime.fromisoformat(b["responded_at"])
+                    total_hrs += (r_time - c_time).total_seconds() / 3600
+                    if b["responded_at"] <= b["sla_deadline"]:
+                        sla_met += 1
+                except (ValueError, TypeError):
+                    pass
+            avg_res = total_hrs / len(responded) if responded else 8
+            sla_rate = sla_met / len(responded) * 100 if responded else 80
 
     # Simulate changes
-    new_staff = current_staff + params.add_staff
+    new_staff = max(1, current_staff + params.add_staff)
     capacity_change = (new_staff / max(current_staff, 1))
 
-    # Resolution improvement
     if params.extend_shift_hours > 0:
         extra_capacity = params.extend_shift_hours / 8.0
         capacity_change += extra_capacity * 0.15
@@ -48,13 +85,11 @@ def run_simulation(params: SimulationParams, db: Session = Depends(get_db)):
     new_avg_res = avg_res / capacity_change if capacity_change > 0 else avg_res
     new_sla = min(99.5, sla_rate * (capacity_change ** 0.4))
 
-    # Cases reallocation impact
     new_active = active_cases - params.reallocate_cases
 
-    # Efficiency change
     cases_per_staff_before = active_cases / max(current_staff, 1)
     cases_per_staff_after = new_active / max(new_staff, 1)
-    efficiency_change = round((1 - cases_per_staff_after / max(cases_per_staff_before, 1)) * 100, 1)
+    efficiency_change = round((1 - cases_per_staff_after / max(cases_per_staff_before, 0.1)) * 100, 1)
 
     return {
         "current": {

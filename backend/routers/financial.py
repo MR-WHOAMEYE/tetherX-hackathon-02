@@ -1,11 +1,24 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+"""
+Financial Impact analytics.
+Uses MongoDB only — no SQLite mock data.
+"""
+from fastapi import APIRouter
 from pydantic import BaseModel
-from database import get_db
-from models import Case, Appointment, Staff
+from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter(prefix="/api/financial", tags=["Financial Impact"])
+
+# MongoDB
+MONGO_URI = os.getenv("mongo_db", "")
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
+mdb = client["zero_intercept"] if client is not None else None
+bookings_col = mdb["appointment_bookings"] if mdb is not None else None
+admissions_col = mdb["ward_admissions"] if mdb is not None else None
+users_col = mdb["users"] if mdb is not None else None
+feedback_col = mdb["patient_feedback"] if mdb is not None else None
 
 
 class ROIParams(BaseModel):
@@ -15,44 +28,54 @@ class ROIParams(BaseModel):
 
 
 @router.get("/impact")
-def financial_impact(db: Session = Depends(get_db)):
+def financial_impact():
     """Calculate financial impact in INR with extended intelligence."""
 
-    # No-show revenue loss
-    total_appointments = db.query(func.count(Appointment.appointment_id)).scalar()
-    no_shows = db.query(func.count(Appointment.appointment_id)).filter(
-        Appointment.attended_flag == False
-    ).scalar()
+    # No-show revenue loss (from bookings)
+    total_appointments = bookings_col.count_documents({}) if bookings_col is not None else 0
+    no_shows = bookings_col.count_documents({"status": {"$in": ["cancel", "cancelled", "no_show"]}}) if bookings_col is not None else 0
     no_show_rate = round(no_shows / max(total_appointments, 1) * 100, 1)
     avg_appointment_value = 1500
     revenue_loss = no_shows * avg_appointment_value
 
-    # Cost of delay
-    resolved = db.query(Case).filter(
-        Case.status == "Resolved", Case.resolved_time.isnot(None)
-    ).all()
-    delayed_cases = [c for c in resolved if c.resolved_time > c.sla_deadline]
-    total_delay_hours = sum(
-        (c.resolved_time - c.sla_deadline).total_seconds() / 3600
-        for c in delayed_cases
-    )
+    # Cost of delay (from bookings with SLA)
+    delayed_cases = []
+    total_delay_hours = 0
+    if bookings_col is not None:
+        from datetime import datetime
+        responded = list(bookings_col.find({
+            "responded_at": {"$ne": None},
+            "sla_deadline": {"$ne": None},
+        }))
+        for b in responded:
+            try:
+                if b.get("responded_at", "") > b.get("sla_deadline", ""):
+                    delayed_cases.append(b)
+                    r_time = datetime.fromisoformat(b["responded_at"])
+                    s_time = datetime.fromisoformat(b["sla_deadline"])
+                    total_delay_hours += (r_time - s_time).total_seconds() / 3600
+            except (ValueError, TypeError):
+                continue
+
     cost_per_delay_hour = 800
     delay_cost = round(total_delay_hours * cost_per_delay_hour)
 
-    # Overtime cost
-    total_overtime = db.query(func.sum(Staff.overtime_hours)).scalar() or 0
+    # Staff costs
+    total_staff = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
+    # Estimate overtime from workload indicators
+    total_active = admissions_col.count_documents({"status": {"$in": ["admitted", "pending"]}}) if admissions_col is not None else 0
+    estimated_overtime = max(0, (total_active / max(total_staff, 1) - 5) * total_staff * 2)  # estimate
     overtime_rate = 950
-    overtime_cost = round(total_overtime * overtime_rate)
+    overtime_cost = round(estimated_overtime * overtime_rate)
 
     # Resource underutilization cost
-    total_staff = db.query(func.count(Staff.staff_id)).scalar()
-    avg_utilization = 0.72  # estimated
+    avg_utilization = 0.72
     underutilization_cost = round(total_staff * 75000 * (1 - avg_utilization) * 0.3)
 
-    # Emergency premium cost
-    emergency_cases = db.query(func.count(Case.case_id)).filter(
-        Case.department == "Emergency", Case.severity == "Critical"
-    ).scalar()
+    # Emergency premium cost (ICU admissions)
+    emergency_cases = admissions_col.count_documents({
+        "department": "Emergency", "ward_type": "ICU"
+    }) if admissions_col is not None else 0
     emergency_premium_cost = emergency_cases * 2500
 
     # Budget forecast
@@ -65,35 +88,37 @@ def financial_impact(db: Session = Depends(get_db)):
     # Financial summary metrics
     total_losses = delay_cost + overtime_cost + revenue_loss + underutilization_cost + emergency_premium_cost
     risk_exposure = total_losses
-    optimization_potential = round(total_losses * 0.35)  # 35% recoverable
+    optimization_potential = round(total_losses * 0.35)
     budget_utilization = round(min(100, (total_losses / max(total_monthly, 1)) * 100 + 65), 1)
     revenue_leakage = round(revenue_loss / max(total_monthly, 1) * 100, 1)
     net_impact = -total_losses
 
-    # Department breakdown with efficiency
+    # Department breakdown
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     dept_costs = []
     for dept in departments:
-        dept_staff = db.query(func.count(Staff.staff_id)).filter(Staff.department == dept).scalar()
-        dept_overtime = db.query(func.sum(Staff.overtime_hours)).filter(Staff.department == dept).scalar() or 0
-        dept_noshow = db.query(func.count(Appointment.appointment_id)).filter(
-            Appointment.department == dept, Appointment.attended_flag == False
-        ).scalar()
-        dept_total_cases = db.query(func.count(Case.case_id)).filter(Case.department == dept).scalar()
-        dept_resolved = db.query(func.count(Case.case_id)).filter(
-            Case.department == dept, Case.status == "Resolved"
-        ).scalar()
+        dept_staff = users_col.count_documents({
+            "department": dept, "role": {"$in": ["doctor", "nurse"]}
+        }) if users_col is not None else 0
+
+        dept_noshow = bookings_col.count_documents({
+            "department": dept, "status": {"$in": ["cancel", "cancelled", "no_show"]}
+        }) if bookings_col is not None else 0
+
+        dept_total_cases = admissions_col.count_documents({"department": dept}) if admissions_col is not None else 0
+        dept_resolved = admissions_col.count_documents({
+            "department": dept, "status": "discharged"
+        }) if admissions_col is not None else 0
 
         dept_staff_cost = dept_staff * avg_salary_monthly
-        dept_overtime_cost = round(dept_overtime * overtime_rate)
+        dept_overtime_cost = 0  # estimated
         dept_noshow_loss = dept_noshow * avg_appointment_value
         dept_total_cost = dept_staff_cost + dept_overtime_cost + dept_noshow_loss
 
         cost_per_case = round(dept_total_cost / max(dept_total_cases, 1))
-        revenue_per_case = round(avg_appointment_value * 2.5)  # estimated revenue per case
-        overtime_ratio = round(dept_overtime / max(dept_staff * 160, 1) * 100, 1)  # % of total hours
+        revenue_per_case = round(avg_appointment_value * 2.5)
         efficiency_score = max(0, min(100, round(
-            100 - overtime_ratio * 0.5 - (dept_noshow / max(dept_total_cases, 1) * 100) * 0.3
+            100 - (dept_noshow / max(dept_total_cases, 1) * 100) * 0.5
         )))
 
         dept_costs.append({
@@ -104,7 +129,7 @@ def financial_impact(db: Session = Depends(get_db)):
             "total_cost": dept_total_cost,
             "cost_per_case": cost_per_case,
             "revenue_per_case": revenue_per_case,
-            "overtime_ratio": overtime_ratio,
+            "overtime_ratio": 0,
             "efficiency_score": efficiency_score,
             "total_cases": dept_total_cases,
             "resolved_cases": dept_resolved,
@@ -170,7 +195,7 @@ def financial_impact(db: Session = Depends(get_db)):
             "delay_cost": delay_cost,
         },
         "overtime_impact": {
-            "total_overtime_hours": round(total_overtime, 1),
+            "total_overtime_hours": round(estimated_overtime, 1),
             "overtime_cost": overtime_cost,
         },
         "budget_forecast": {
@@ -187,23 +212,35 @@ def financial_impact(db: Session = Depends(get_db)):
 
 
 @router.post("/simulate-roi")
-def simulate_roi(params: ROIParams, db: Session = Depends(get_db)):
+def simulate_roi(params: ROIParams):
     """Simulate ROI from budget and operational changes."""
-    total_staff = db.query(func.count(Staff.staff_id)).scalar()
-    total_overtime = db.query(func.sum(Staff.overtime_hours)).scalar() or 0
-    overtime_cost = round(total_overtime * 950)
+    total_staff = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
+    total_active = admissions_col.count_documents({"status": {"$in": ["admitted", "pending"]}}) if admissions_col is not None else 0
+    estimated_overtime = max(0, (total_active / max(total_staff, 1) - 5) * total_staff * 2)
+    overtime_cost = round(estimated_overtime * 950)
 
-    resolved = db.query(Case).filter(
-        Case.status == "Resolved", Case.resolved_time.isnot(None)
-    ).all()
-    delayed_cases = [c for c in resolved if c.resolved_time > c.sla_deadline]
-    delay_cost = round(sum((c.resolved_time - c.sla_deadline).total_seconds() / 3600 for c in delayed_cases) * 800)
+    # Delay cost from bookings
+    delay_cost = 0
+    if bookings_col is not None:
+        from datetime import datetime
+        responded = list(bookings_col.find({
+            "responded_at": {"$ne": None},
+            "sla_deadline": {"$ne": None},
+        }))
+        for b in responded:
+            try:
+                if b.get("responded_at", "") > b.get("sla_deadline", ""):
+                    r_time = datetime.fromisoformat(b["responded_at"])
+                    s_time = datetime.fromisoformat(b["sla_deadline"])
+                    delay_cost += (r_time - s_time).total_seconds() / 3600 * 800
+            except (ValueError, TypeError):
+                continue
+    delay_cost = round(delay_cost)
 
-    # SLA improvement from additional budget (more staff = better SLA)
+    # SLA improvement from additional budget
     new_staff = round(params.additional_budget / 75000) if params.additional_budget > 0 else 0
     sla_change = min(20, round(new_staff * 1.5 + params.overtime_reduction_pct * 0.15 - abs(params.caseload_adjustment_pct) * 0.05, 1))
 
-    # Cost reduction from overtime reduction
     overtime_savings = round(overtime_cost * params.overtime_reduction_pct / 100)
     delay_savings = round(delay_cost * min(sla_change, 15) / 100)
     cost_reduction = overtime_savings + delay_savings

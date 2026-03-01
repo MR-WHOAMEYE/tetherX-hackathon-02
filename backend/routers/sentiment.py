@@ -1,16 +1,30 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from database import get_db
-from models import Feedback
+"""
+Sentiment Intelligence — NLP-based patient feedback analysis.
+Uses MongoDB only — no SQLite mock data.
+"""
+from fastapi import APIRouter
+from pymongo import MongoClient
 from collections import defaultdict
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter(prefix="/api/sentiment", tags=["Sentiment Intelligence"])
+
+# MongoDB
+MONGO_URI = os.getenv("mongo_db", "")
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
+mdb = client["zero_intercept"] if client is not None else None
+feedback_col = mdb["patient_feedback"] if mdb is not None else None
 
 
 @router.get("/analysis")
-def sentiment_analysis(db: Session = Depends(get_db)):
+def sentiment_analysis():
     """NLP-based sentiment analysis with department ranking."""
-    feedbacks = db.query(Feedback).all()
+    if feedback_col is None:
+        return {"departments": [], "overall": {"avg_score": 0, "total_feedback": 0, "sentiment_distribution": {"positive": 0, "neutral": 0, "negative": 0}}}
+
+    feedbacks = list(feedback_col.find())
 
     dept_stats = defaultdict(lambda: {
         "total": 0, "positive": 0, "neutral": 0, "negative": 0,
@@ -18,18 +32,19 @@ def sentiment_analysis(db: Session = Depends(get_db)):
     })
 
     for f in feedbacks:
-        d = dept_stats[f.department]
+        score = f.get("sentiment_score", 0)
+        d = dept_stats[f.get("department", "Unknown")]
         d["total"] += 1
-        d["sum_score"] += f.sentiment_score
-        d["sum_rating"] += f.rating
-        if f.sentiment_score > 0.2:
+        d["sum_score"] += score
+        d["sum_rating"] += f.get("rating", 0)
+        if score > 0.2:
             d["positive"] += 1
-        elif f.sentiment_score < -0.1:
+        elif score < -0.1:
             d["negative"] += 1
         else:
             d["neutral"] += 1
-        if f.sentiment_score < -0.1:
-            d["texts"].append({"text": f.feedback_text, "score": f.sentiment_score, "rating": f.rating})
+        if score < -0.1:
+            d["texts"].append({"text": f.get("feedback_text", ""), "score": score, "rating": f.get("rating", 0)})
 
     results = []
     for dept, stats in dept_stats.items():
@@ -50,8 +65,7 @@ def sentiment_analysis(db: Session = Depends(get_db)):
 
     results.sort(key=lambda x: x["dissatisfaction_pct"], reverse=True)
 
-    # Overall sentiment
-    all_scores = [f.sentiment_score for f in feedbacks]
+    all_scores = [f.get("sentiment_score", 0) for f in feedbacks]
     overall = {
         "avg_score": round(sum(all_scores) / len(all_scores), 3) if all_scores else 0,
         "total_feedback": len(feedbacks),

@@ -1,15 +1,12 @@
 """
 Doctor API — prescriptions, diagnoses, appointment management.
-Uses MongoDB for doctor-specific data.
+Uses MongoDB only — no SQLite mock data.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from pymongo import MongoClient
 from bson import ObjectId
-from sqlalchemy.orm import Session
-from database import get_db
-from models import Case, Staff, Appointment
 import os
 from datetime import datetime
 from dotenv import load_dotenv
@@ -24,6 +21,8 @@ db = client["zero_intercept"] if client is not None else None
 prescriptions_col = db["prescriptions"] if db is not None else None
 diagnoses_col = db["diagnoses"] if db is not None else None
 bookings_col = db["appointment_bookings"] if db is not None else None
+admissions_col = db["ward_admissions"] if db is not None else None
+users_col = db["users"] if db is not None else None
 
 
 # ---- Models ----
@@ -54,24 +53,26 @@ class AppointmentAction(BaseModel):
 
 # ---- Doctor Dashboard data ----
 @router.get("/dashboard")
-def doctor_dashboard(department: Optional[str] = None, staff_id: Optional[int] = None, db_sql: Session = Depends(get_db)):
-    # Today's cases
-    cases = db_sql.query(Case)
+def doctor_dashboard(department: Optional[str] = None, staff_id: Optional[int] = None):
+    # Total admissions as cases
+    adm_query = {}
     if department:
-        cases = cases.filter(Case.department == department)
-    if staff_id:
-        cases = cases.filter(Case.staff_id == staff_id)
-    all_cases = cases.all()
+        adm_query["department"] = department
+    
+    total_cases = admissions_col.count_documents(adm_query) if admissions_col is not None else 0
+    
+    open_query = {**adm_query, "status": {"$in": ["admitted", "pending"]}}
+    open_cases = admissions_col.count_documents(open_query) if admissions_col is not None else 0
+    
+    critical_query = {**adm_query, "ward_type": "ICU"}
+    critical_alerts = admissions_col.count_documents(critical_query) if admissions_col is not None else 0
 
-    open_cases = [c for c in all_cases if c.status in ("Open", "In Progress")]
-    critical = [c for c in all_cases if c.severity == "Critical"]
-
-    # Today's appointments
-    appts = db_sql.query(Appointment)
+    # Today's appointments from bookings
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    appt_query = {"preferred_date": today_str}
     if department:
-        appts = appts.filter(Appointment.department == department)
-    all_appts = appts.all()
-    today_appts = [a for a in all_appts if a.slot_time and a.slot_time.date() == datetime.now().date()]
+        appt_query["department"] = department
+    today_appointments = bookings_col.count_documents(appt_query) if bookings_col is not None else 0
 
     # Pending bookings from MongoDB
     pending_bookings = 0
@@ -89,30 +90,46 @@ def doctor_dashboard(department: Optional[str] = None, staff_id: Optional[int] =
             query["doctor_department"] = department
         recent_rx = prescriptions_col.count_documents(query)
 
+    # Recent active cases from admissions
+    cases_list = []
+    if admissions_col is not None:
+        active_docs = admissions_col.find(open_query).sort("created_at", -1).limit(10)
+        cases_list = [
+            {
+                "id": str(a["_id"]),
+                "department": a.get("department", ""),
+                "severity": a.get("ward_type", "General"),
+                "status": a.get("status", ""),
+                "patient_name": a.get("patient_name", ""),
+                "created_time": a.get("created_at", ""),
+            }
+            for a in active_docs
+        ]
+
+    # Emergency alerts (ICU patients)
+    emergency_alerts = []
+    if admissions_col is not None:
+        icu_docs = admissions_col.find(critical_query).sort("created_at", -1).limit(5)
+        emergency_alerts = [
+            {
+                "id": str(a["_id"]),
+                "department": a.get("department", ""),
+                "severity": "Critical",
+                "status": a.get("status", ""),
+                "patient_name": a.get("patient_name", ""),
+            }
+            for a in icu_docs
+        ]
+
     return {
-        "total_cases": len(all_cases),
-        "open_cases": len(open_cases),
-        "critical_alerts": len(critical),
-        "today_appointments": len(today_appts),
+        "total_cases": total_cases,
+        "open_cases": open_cases,
+        "critical_alerts": critical_alerts,
+        "today_appointments": today_appointments,
         "pending_bookings": pending_bookings,
         "total_prescriptions": recent_rx,
-        "cases": [
-            {
-                "id": c.case_id, "department": c.department, "severity": c.severity,
-                "status": c.status, "staff_id": c.staff_id,
-                "created_time": c.created_time.isoformat() if c.created_time else None,
-                "sla_deadline": c.sla_deadline.isoformat() if c.sla_deadline else None,
-            }
-            for c in open_cases[:10]
-        ],
-        "emergency_alerts": [
-            {
-                "id": c.case_id, "department": c.department, "severity": c.severity,
-                "status": c.status, "staff_id": c.staff_id,
-                "sla_deadline": c.sla_deadline.isoformat() if c.sla_deadline else None,
-            }
-            for c in critical[:5]
-        ],
+        "cases": cases_list,
+        "emergency_alerts": emergency_alerts,
     }
 
 
@@ -220,18 +237,20 @@ def get_diagnoses(patient_email: Optional[str] = None, department: Optional[str]
     }
 
 
-# ---- Case Status Update ----
+# ---- Case Status Update (via admissions) ----
 @router.put("/cases/{case_id}/status")
-def update_case_status(case_id: int, body: CaseStatusUpdate, db_sql: Session = Depends(get_db)):
-    case = db_sql.query(Case).filter(Case.case_id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+def update_case_status(case_id: str, body: CaseStatusUpdate):
+    if admissions_col is None:
+        raise HTTPException(status_code=503, detail="Database not available")
 
-    case.status = body.status
-    if body.status == "Resolved":
-        case.resolved_time = datetime.now()
-    db_sql.commit()
-    return {"message": f"Case #{case_id} updated to {body.status}"}
+    update_data = {"status": body.status}
+    if body.status == "discharged":
+        update_data["discharged_at"] = datetime.utcnow().isoformat()
+
+    result = admissions_col.update_one({"_id": ObjectId(case_id)}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return {"message": f"Case {case_id} updated to {body.status}"}
 
 
 # ---- Appointment Bookings ----

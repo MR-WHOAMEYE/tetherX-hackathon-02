@@ -1,15 +1,12 @@
 """
 Nurse API — patient vitals (BP, sugar, notes), ward management, profiles, shifts.
-Uses MongoDB for nurse-specific data.
+Uses MongoDB only — no SQLite mock data.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from pymongo import MongoClient
 from bson import ObjectId
-from sqlalchemy.orm import Session
-from database import get_db
-from models import Case, Staff, Appointment
 import os
 from datetime import datetime
 from dotenv import load_dotenv
@@ -27,6 +24,8 @@ nurse_profiles_col = mdb["nurse_profiles"] if mdb is not None else None
 shift_schedules_col = mdb["shift_schedules"] if mdb is not None else None
 admissions_col = mdb["ward_admissions"] if mdb is not None else None
 wards_col = mdb["wards"] if mdb is not None else None
+bookings_col = mdb["appointment_bookings"] if mdb is not None else None
+users_col = mdb["users"] if mdb is not None else None
 
 
 # ── Models ──
@@ -56,7 +55,7 @@ class ShiftSchedule(BaseModel):
 # NURSE DASHBOARD
 # ═══════════════════════════════════════════
 @router.get("/dashboard")
-def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str] = None, db_sql: Session = Depends(get_db)):
+def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str] = None):
     # Get nurse profile if available
     profile = None
     if nurse_profiles_col is not None and nurse_email:
@@ -71,24 +70,46 @@ def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str]
     if wards_col is not None and assigned_ward:
         ward_info = wards_col.find_one({"ward_id": assigned_ward})
 
-    # Ward stats from SQLite
-    cases = db_sql.query(Case)
-    if assigned_dept:
-        cases = cases.filter(Case.department == assigned_dept)
-    all_cases = cases.all()
-    open_cases = [c for c in all_cases if c.status in ("Open", "In Progress")]
+    # Patient counts from admissions (MongoDB)
+    total_patients = 0
+    active_cases = []
+    if admissions_col is not None:
+        adm_query = {"status": {"$in": ["admitted", "pending"]}}
+        if assigned_dept:
+            adm_query["department"] = assigned_dept
+        if assigned_ward:
+            adm_query["ward_id"] = assigned_ward
+        total_patients = admissions_col.count_documents(adm_query)
+        active_docs = admissions_col.find(adm_query).sort("created_at", -1).limit(10)
+        active_cases = [
+            {
+                "id": str(a["_id"]),
+                "patient_name": a.get("patient_name", ""),
+                "status": a.get("status", ""),
+                "ward_id": a.get("ward_id", ""),
+                "department": a.get("department", ""),
+                "ward_type": a.get("ward_type", ""),
+                "created_at": a.get("created_at", ""),
+            }
+            for a in active_docs
+        ]
 
-    # Staff in ward
-    staff = db_sql.query(Staff)
-    if assigned_dept:
-        staff = staff.filter(Staff.department == assigned_dept)
-    ward_staff = staff.all()
+    # Staff count from users collection (nurses/doctors in department)
+    ward_staff_count = 0
+    if users_col is not None:
+        staff_query = {"role": {"$in": ["nurse", "doctor"]}}
+        if assigned_dept:
+            staff_query["department"] = assigned_dept
+        ward_staff_count = users_col.count_documents(staff_query)
 
-    # Today's appointments
-    appts = db_sql.query(Appointment)
-    if assigned_dept:
-        appts = appts.filter(Appointment.department == assigned_dept)
-    today = [a for a in appts.all() if a.slot_time and a.slot_time.date() == datetime.now().date()]
+    # Today's appointments from bookings (MongoDB)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_appointments = 0
+    if bookings_col is not None:
+        appt_query = {"preferred_date": today_str}
+        if assigned_dept:
+            appt_query["department"] = assigned_dept
+        today_appointments = bookings_col.count_documents(appt_query)
 
     # Recent vitals count
     vitals_count = 0
@@ -155,17 +176,11 @@ def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str]
             "capacity": ward_info["capacity"] if ward_info else 0,
             "current_patients": ward_info.get("current_patients", 0) if ward_info else 0,
         } if ward_info else None,
-        "total_patients": len(open_cases),
-        "ward_staff": len(ward_staff),
-        "today_appointments": len(today),
+        "total_patients": total_patients,
+        "ward_staff": ward_staff_count,
+        "today_appointments": today_appointments,
         "vitals_recorded": vitals_count,
-        "active_cases": [
-            {
-                "id": c.case_id, "severity": c.severity, "status": c.status,
-                "staff_id": c.staff_id, "department": c.department,
-            }
-            for c in open_cases[:10]
-        ],
+        "active_cases": active_cases,
         "medication_schedule": med_schedule,
         "pending_admissions": pending_admissions,
         "admitted_patients": admitted_patients,

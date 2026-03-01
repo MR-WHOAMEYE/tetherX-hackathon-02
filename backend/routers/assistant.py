@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+"""
+AI Assistant — conversational hospital intelligence assistant.
+Uses MongoDB only — no SQLite mock data.
+"""
+from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
-from database import get_db
-from models import Case, Staff, Feedback, Appointment
+from pymongo import MongoClient
 import os
 import json
 from dotenv import load_dotenv
@@ -13,6 +14,16 @@ from collections import defaultdict
 load_dotenv()
 
 router = APIRouter(prefix="/api/assistant", tags=["AI Assistant"])
+
+# MongoDB
+MONGO_URI = os.getenv("mongo_db", "")
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
+mdb = client["zero_intercept"] if client is not None else None
+admissions_col = mdb["ward_admissions"] if mdb is not None else None
+users_col = mdb["users"] if mdb is not None else None
+bookings_col = mdb["appointment_bookings"] if mdb is not None else None
+prescriptions_col = mdb["prescriptions"] if mdb is not None else None
+feedback_col = mdb["patient_feedback"] if mdb is not None else None
 
 # ---------- Gemini setup ----------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -38,88 +49,77 @@ class QueryRequest(BaseModel):
 
 
 # ---------- Build live DB context for Gemini ----------
-def _build_db_context(db: Session) -> str:
-    total_cases = db.query(func.count(Case.case_id)).scalar()
-    active_cases = db.query(func.count(Case.case_id)).filter(
-        Case.status.in_(["Open", "In Progress", "Escalated"])
-    ).scalar()
-    resolved_cases = db.query(func.count(Case.case_id)).filter(Case.status == "Resolved").scalar()
-
-    resolved_with_time = db.query(Case).filter(Case.status == "Resolved", Case.resolved_time.isnot(None)).all()
-    avg_resolution = round(
-        sum((c.resolved_time - c.created_time).total_seconds() / 3600 for c in resolved_with_time) / len(resolved_with_time), 1
-    ) if resolved_with_time else 0
-
-    sla_met = sum(1 for c in resolved_with_time if c.resolved_time <= c.sla_deadline)
-    sla_compliance = round(sla_met / len(resolved_with_time) * 100, 1) if resolved_with_time else 0
+def _build_db_context() -> str:
+    # Admissions as cases
+    total_cases = admissions_col.count_documents({}) if admissions_col is not None else 0
+    active_cases = admissions_col.count_documents({
+        "status": {"$in": ["admitted", "pending"]}
+    }) if admissions_col is not None else 0
+    discharged = admissions_col.count_documents({"status": "discharged"}) if admissions_col is not None else 0
 
     # Staff stats
-    total_staff = db.query(func.count(Staff.staff_id)).scalar()
-    burnout_staff = db.query(func.count(Staff.staff_id)).filter(Staff.overtime_hours > 10).scalar()
-    burnout_risk = round(burnout_staff / total_staff * 100, 1) if total_staff else 0
-
-    risky_staff = db.query(Staff).filter(Staff.overtime_hours > 10).order_by(Staff.overtime_hours.desc()).limit(5).all()
-    risky_staff_info = [{"name": s.name, "dept": s.department, "overtime": s.overtime_hours, "shift_hrs": s.shift_hours} for s in risky_staff]
+    total_staff = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
+    total_doctors = users_col.count_documents({"role": "doctor"}) if users_col is not None else 0
+    total_nurses = users_col.count_documents({"role": "nurse"}) if users_col is not None else 0
 
     # Department breakdown
-    all_cases = db.query(Case).all()
-    dept_stats = defaultdict(lambda: {"total": 0, "active": 0, "resolved": 0, "res_time": 0, "sla_met": 0})
-    for c in all_cases:
-        d = dept_stats[c.department]
-        d["total"] += 1
-        if c.status in ["Open", "In Progress", "Escalated"]:
-            d["active"] += 1
-        if c.status == "Resolved" and c.resolved_time:
-            d["resolved"] += 1
-            d["res_time"] += (c.resolved_time - c.created_time).total_seconds() / 3600
-            if c.resolved_time <= c.sla_deadline:
-                d["sla_met"] += 1
-
+    departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     dept_summary = []
-    for name, s in dept_stats.items():
-        avg_res = round(s["res_time"] / s["resolved"], 2) if s["resolved"] else 0
-        sla = round(s["sla_met"] / s["resolved"] * 100, 1) if s["resolved"] else 0
-        dept_summary.append(f"  - {name}: {s['total']} total, {s['active']} active, {s['resolved']} resolved, avg resolution {avg_res}hrs, SLA compliance {sla}%")
+    for dept in departments:
+        dept_admissions = admissions_col.count_documents({"department": dept}) if admissions_col is not None else 0
+        dept_active = admissions_col.count_documents({
+            "department": dept, "status": {"$in": ["admitted", "pending"]}
+        }) if admissions_col is not None else 0
+        dept_staff = users_col.count_documents({
+            "department": dept, "role": {"$in": ["doctor", "nurse"]}
+        }) if users_col is not None else 0
+        dept_bookings = bookings_col.count_documents({"department": dept}) if bookings_col is not None else 0
+        dept_summary.append(f"  - {dept}: {dept_admissions} total admissions, {dept_active} active, {dept_staff} staff, {dept_bookings} bookings")
     dept_text = "\n".join(dept_summary)
 
     # Patient feedback
-    feedbacks = db.query(Feedback).all()
-    avg_rating = round(sum(f.rating for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
-    negative = sum(1 for f in feedbacks if f.sentiment_score < -0.1)
-    total_feedback = len(feedbacks)
+    total_feedback = feedback_col.count_documents({}) if feedback_col is not None else 0
+    avg_rating = 0
+    if feedback_col is not None and total_feedback > 0:
+        pipeline = [{"$group": {"_id": None, "avg": {"$avg": "$rating"}}}]
+        result = list(feedback_col.aggregate(pipeline))
+        avg_rating = round(result[0]["avg"], 1) if result else 0
 
-    # Financial
-    no_shows = db.query(func.count(Appointment.appointment_id)).filter(
-        Appointment.attended_flag == False
-    ).scalar()
-    overtime_total = db.query(func.sum(Staff.overtime_hours)).scalar() or 0
+    # Bookings
+    total_bookings = bookings_col.count_documents({}) if bookings_col is not None else 0
+    pending_bookings = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
+    no_shows = bookings_col.count_documents({"status": {"$in": ["cancel", "cancelled", "no_show"]}}) if bookings_col is not None else 0
+
+    # Prescriptions
+    total_rx = prescriptions_col.count_documents({}) if prescriptions_col is not None else 0
 
     context = f"""
 === HOSPITAL LIVE DATA (as of now) ===
 
-CASES:
-- Total cases: {total_cases}
-- Active cases: {active_cases}
-- Resolved cases: {resolved_cases}
-- Average resolution time: {avg_resolution} hours
-- SLA compliance: {sla_compliance}%
+ADMISSIONS/CASES:
+- Total admissions: {total_cases}
+- Active (admitted/pending): {active_cases}
+- Discharged: {discharged}
 
 STAFF:
-- Total staff: {total_staff}
-- Staff at burnout risk (>10hrs overtime): {burnout_staff} ({burnout_risk}%)
-- Top burnout-risk staff: {json.dumps(risky_staff_info)}
+- Total staff: {total_staff} (Doctors: {total_doctors}, Nurses: {total_nurses})
 
 DEPARTMENT BREAKDOWN:
 {dept_text}
 
+BOOKINGS:
+- Total bookings: {total_bookings}
+- Pending: {pending_bookings}
+- Cancelled/No-shows: {no_shows}
+
+PRESCRIPTIONS: {total_rx} total
+
 PATIENT SATISFACTION:
 - Average rating: {avg_rating}/5
 - Total feedback entries: {total_feedback}
-- Negative feedback count: {negative}
 
-FINANCIAL:
-- Appointment no-shows: {no_shows} (est. revenue loss: ${no_shows * 150})
-- Total overtime hours: {round(overtime_total, 1)} (est. cost: ${round(overtime_total * 85)})
+FINANCIAL ESTIMATES:
+- No-show revenue loss: ₹{no_shows * 1500}
 """
     return context
 
@@ -142,37 +142,33 @@ Respond in a professional but approachable tone. Use markdown formatting for rea
 
 # ---------- Main endpoint ----------
 @router.post("/query")
-def ai_query(request: QueryRequest, db: Session = Depends(get_db)):
+def ai_query(request: QueryRequest):
     """AI conversational assistant powered by Gemini with live database context."""
     query = request.query
 
     # If Gemini is available, use it
     if gemini_client:
         try:
-            return _gemini_query(query, request.history, db)
+            return _gemini_query(query, request.history)
         except Exception as e:
             print(f"⚠️ Gemini error: {e}. Falling back to keyword-based.")
 
     # Fallback to keyword-based system
-    return _keyword_fallback(query, db)
+    return _keyword_fallback(query)
 
 
-def _gemini_query(query: str, history: list[ChatMessage] | None, db: Session) -> dict:
+def _gemini_query(query: str, history: list[ChatMessage] | None) -> dict:
     """Query Gemini with live database context and conversation history."""
-    db_context = _build_db_context(db)
+    db_context = _build_db_context()
 
-    # Build conversation contents for Gemini
     contents = []
-
-    # Add conversation history if available
     if history:
-        for msg in history[-10:]:  # Keep last 10 messages for context
+        for msg in history[-10:]:
             contents.append({
                 "role": "user" if msg.role == "user" else "model",
                 "parts": [{"text": msg.content}]
             })
 
-    # Add current query
     contents.append({
         "role": "user",
         "parts": [{"text": query}]
@@ -197,128 +193,133 @@ def _gemini_query(query: str, history: list[ChatMessage] | None, db: Session) ->
     }
 
 
-# ---------- Keyword fallback (original system) ----------
-def _keyword_fallback(query: str, db: Session) -> dict:
+# ---------- Keyword fallback ----------
+def _keyword_fallback(query: str) -> dict:
     q = query.lower()
     if any(w in q for w in ["underperform", "worst", "lowest", "poor", "bad department"]):
-        return _underperforming_departments(db)
+        return _underperforming_departments()
     elif any(w in q for w in ["burnout", "overwork", "tired", "exhausted", "stress"]):
-        return _burnout_analysis(db)
+        return _burnout_analysis()
     elif any(w in q for w in ["delay", "slow", "late", "sla", "breach"]):
-        return _delay_analysis(db)
+        return _delay_analysis()
     elif any(w in q for w in ["staff", "doctor", "nurse", "personnel"]):
-        return _staff_analysis(db)
+        return _staff_analysis()
     elif any(w in q for w in ["patient", "feedback", "satisfaction", "complaint"]):
-        return _patient_satisfaction(db)
+        return _patient_satisfaction()
     elif any(w in q for w in ["case", "workload", "volume", "busy"]):
-        return _workload_summary(db)
+        return _workload_summary()
     elif any(w in q for w in ["cost", "money", "budget", "financial", "revenue"]):
-        return _financial_summary(db)
+        return _financial_summary()
     else:
-        return _general_summary(db)
+        return _general_summary()
 
 
-def _underperforming_departments(db):
-    resolved = db.query(Case).filter(Case.status == "Resolved", Case.resolved_time.isnot(None)).all()
-    dept = defaultdict(lambda: {"count": 0, "time": 0, "sla_met": 0})
-    for c in resolved:
-        hrs = (c.resolved_time - c.created_time).total_seconds() / 3600
-        dept[c.department]["count"] += 1
-        dept[c.department]["time"] += hrs
-        if c.resolved_time <= c.sla_deadline:
-            dept[c.department]["sla_met"] += 1
-
+def _underperforming_departments():
+    departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     rankings = []
-    for name, d in dept.items():
-        avg = d["time"] / d["count"]
-        sla = d["sla_met"] / d["count"] * 100
-        rankings.append({"department": name, "avg_resolution_hrs": round(avg, 1), "sla_compliance": round(sla, 1)})
-    rankings.sort(key=lambda x: x["sla_compliance"])
-
-    worst = rankings[:3] if rankings else []
+    for dept in departments:
+        total = admissions_col.count_documents({"department": dept}) if admissions_col is not None else 0
+        active = admissions_col.count_documents({
+            "department": dept, "status": {"$in": ["admitted", "pending"]}
+        }) if admissions_col is not None else 0
+        load = round(active / max(total, 1) * 100, 1)
+        rankings.append({"department": dept, "total_admissions": total, "active": active, "load_pct": load})
+    rankings.sort(key=lambda x: x["load_pct"], reverse=True)
+    worst = rankings[:3]
     return {
-        "response": f"The departments with the lowest SLA compliance are: {', '.join(d['department'] for d in worst)}. These departments need immediate attention to improve their case resolution times.",
-        "insight": "Consider redistributing workload or adding temporary staff to underperforming departments.",
+        "response": f"The departments with the highest patient load are: {', '.join(d['department'] for d in worst)}. These departments need immediate attention.",
+        "insight": "Consider redistributing workload or adding temporary staff to high-load departments.",
         "data": worst,
     }
 
 
-def _burnout_analysis(db):
-    staff = db.query(Staff).filter(Staff.overtime_hours > 10).order_by(Staff.overtime_hours.desc()).all()
-    data = [{"name": s.name, "department": s.department, "overtime": s.overtime_hours, "shift_hrs": s.shift_hours} for s in staff[:5]]
+def _burnout_analysis():
+    departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
+    data = []
+    for dept in departments:
+        staff = users_col.count_documents({
+            "department": dept, "role": {"$in": ["doctor", "nurse"]}
+        }) if users_col is not None else 0
+        active = admissions_col.count_documents({
+            "department": dept, "status": {"$in": ["admitted", "pending"]}
+        }) if admissions_col is not None else 0
+        ratio = round(active / max(staff, 1), 1)
+        if ratio > 5:
+            data.append({"department": dept, "staff": staff, "active_cases": active, "cases_per_staff": ratio})
     return {
-        "response": f"**{len(staff)} staff members** are at burnout risk (>10 hours overtime). The most affected include {', '.join(d['name'] for d in data[:3])}.",
-        "insight": "Immediate action needed: rotate shifts and limit overtime to prevent medical errors.",
+        "response": f"**{len(data)} departments** have high burnout risk (>5 cases per staff member).",
+        "insight": "Immediate action needed: redistribute cases and consider hiring temporary staff.",
         "data": data,
     }
 
 
-def _delay_analysis(db):
-    delayed = db.query(Case).filter(Case.status.in_(["Open", "In Progress", "Escalated"])).all()
-    overdue = [c for c in delayed if c.sla_deadline and c.sla_deadline < c.created_time]
-    dept_delays = defaultdict(int)
-    for c in delayed:
-        dept_delays[c.department] += 1
-    top_delayed = sorted(dept_delays.items(), key=lambda x: x[1], reverse=True)[:3]
+def _delay_analysis():
+    pending = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
+    departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
+    dept_pending = []
+    for dept in departments:
+        count = bookings_col.count_documents({"department": dept, "status": "pending"}) if bookings_col is not None else 0
+        if count > 0:
+            dept_pending.append({"department": dept, "pending_cases": count})
+    dept_pending.sort(key=lambda x: x["pending_cases"], reverse=True)
     return {
-        "response": f"There are **{len(delayed)} active cases**, with delays concentrated in {', '.join(d[0] for d in top_delayed)}.",
-        "insight": "Focus on the top 3 departments with the most pending cases to reduce SLA violations.",
-        "data": [{"department": d[0], "pending_cases": d[1]} for d in top_delayed],
+        "response": f"There are **{pending} pending bookings** awaiting response.",
+        "insight": "Focus on responding to pending bookings to maintain SLA compliance.",
+        "data": dept_pending[:3],
     }
 
 
-def _staff_analysis(db):
-    staff = db.query(Staff).all()
-    dept_staff = defaultdict(int)
-    for s in staff:
-        dept_staff[s.department] += 1
-    data = [{"department": d, "staff_count": c} for d, c in sorted(dept_staff.items(), key=lambda x: x[1], reverse=True)]
+def _staff_analysis():
+    total = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
+    doctors = users_col.count_documents({"role": "doctor"}) if users_col is not None else 0
+    nurses = users_col.count_documents({"role": "nurse"}) if users_col is not None else 0
     return {
-        "response": f"We have **{len(staff)} total staff** across {len(dept_staff)} departments. Largest team: {data[0]['department']} ({data[0]['staff_count']} staff).",
-        "insight": "Evaluate if staffing aligns with case volume — understaffed departments may need rebalancing.",
-        "data": data,
+        "response": f"We have **{total} total staff** — {doctors} doctors and {nurses} nurses.",
+        "insight": "Evaluate if staffing aligns with patient volume — understaffed departments may need rebalancing.",
+        "data": {"total_staff": total, "doctors": doctors, "nurses": nurses},
     }
 
 
-def _patient_satisfaction(db):
-    feedbacks = db.query(Feedback).all()
-    if not feedbacks:
+def _patient_satisfaction():
+    total_feedback = feedback_col.count_documents({}) if feedback_col is not None else 0
+    if total_feedback == 0:
         return {"response": "No patient feedback data available.", "insight": None, "data": None}
-    avg = round(sum(f.rating for f in feedbacks) / len(feedbacks), 2)
-    negative = sum(1 for f in feedbacks if f.sentiment_score < -0.1)
+    pipeline = [{"$group": {"_id": None, "avg": {"$avg": "$rating"}}}]
+    result = list(feedback_col.aggregate(pipeline)) if feedback_col is not None else []
+    avg = round(result[0]["avg"], 2) if result else 0
     return {
-        "response": f"Average patient satisfaction: **{avg}/5** from {len(feedbacks)} responses. **{negative} negative reviews** detected.",
+        "response": f"Average patient satisfaction: **{avg}/5** from {total_feedback} responses.",
         "insight": "Focus on departments with the lowest ratings and address recurring complaint themes.",
-        "data": {"average_rating": avg, "total_responses": len(feedbacks), "negative_count": negative},
+        "data": {"average_rating": avg, "total_responses": total_feedback},
     }
 
 
-def _workload_summary(db):
-    total = db.query(func.count(Case.case_id)).scalar()
-    active = db.query(func.count(Case.case_id)).filter(Case.status.in_(["Open", "In Progress", "Escalated"])).scalar()
+def _workload_summary():
+    total = admissions_col.count_documents({}) if admissions_col is not None else 0
+    active = admissions_col.count_documents({"status": {"$in": ["admitted", "pending"]}}) if admissions_col is not None else 0
+    load_pct = round(active / max(total, 1) * 100, 1)
     return {
-        "response": f"Current workload: **{total} total cases**, with **{active} active** ({round(active/total*100, 1)}% load).",
+        "response": f"Current workload: **{total} total admissions**, with **{active} active** ({load_pct}% load).",
         "insight": "If active cases exceed 60% of total, consider activating surge protocols.",
-        "data": {"total_cases": total, "active_cases": active, "load_percentage": round(active / total * 100, 1)},
+        "data": {"total_cases": total, "active_cases": active, "load_percentage": load_pct},
     }
 
 
-def _financial_summary(db):
-    no_shows = db.query(func.count(Appointment.appointment_id)).filter(Appointment.attended_flag == False).scalar()
-    overtime = db.query(func.sum(Staff.overtime_hours)).scalar() or 0
+def _financial_summary():
+    no_shows = bookings_col.count_documents({"status": {"$in": ["cancel", "cancelled", "no_show"]}}) if bookings_col is not None else 0
     return {
-        "response": f"**Financial overview**: {no_shows} appointment no-shows (est. loss: **${no_shows * 150}**). Overtime costs: **${round(overtime * 85)}** ({round(overtime, 1)} hours).",
-        "insight": "Implement appointment reminders to reduce no-shows and optimize shift scheduling to lower overtime costs.",
-        "data": {"no_shows": no_shows, "no_show_loss": no_shows * 150, "overtime_hours": round(overtime, 1), "overtime_cost": round(overtime * 85)},
+        "response": f"**Financial overview**: {no_shows} appointment no-shows (est. loss: **₹{no_shows * 1500}**).",
+        "insight": "Implement appointment reminders to reduce no-shows and optimize scheduling.",
+        "data": {"no_shows": no_shows, "no_show_loss": no_shows * 1500},
     }
 
 
-def _general_summary(db):
-    total = db.query(func.count(Case.case_id)).scalar()
-    active = db.query(func.count(Case.case_id)).filter(Case.status.in_(["Open", "In Progress", "Escalated"])).scalar()
-    staff = db.query(func.count(Staff.staff_id)).scalar()
+def _general_summary():
+    total = admissions_col.count_documents({}) if admissions_col is not None else 0
+    active = admissions_col.count_documents({"status": {"$in": ["admitted", "pending"]}}) if admissions_col is not None else 0
+    staff = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
     return {
-        "response": f"**Hospital Overview**: {total} total cases, {active} active, {staff} staff members on record. Ask me about specific departments, burnout risks, delays, or financials for deeper insights!",
+        "response": f"**Hospital Overview**: {total} total admissions, {active} active, {staff} staff members. Ask me about specific departments, burnout risks, delays, or financials for deeper insights!",
         "insight": "Try asking about specific topics like 'underperforming departments' or 'burnout risk' for detailed analysis.",
         "data": {"total_cases": total, "active_cases": active, "total_staff": staff},
     }
