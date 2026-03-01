@@ -25,6 +25,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "zero-intercept-secret-2026")
 client = None
 db = None
 users_collection = None
+notifications_collection = None
 
 if MONGO_URI:
     try:
@@ -32,13 +33,14 @@ if MONGO_URI:
         client.server_info()  # Test connection
         db = client["zero_intercept"]
         users_collection = db["users"]
+        notifications_collection = db["notifications"]
         # Create unique index on email
         users_collection.create_index("email", unique=True)
-        print("✅ MongoDB connected successfully")
+        print("[OK] MongoDB connected successfully")
     except Exception as e:
-        print(f"⚠️ MongoDB connection failed: {e}")
+        print(f"[WARN] MongoDB connection failed: {e}")
 else:
-    print("⚠️ No MongoDB URI found in .env")
+    print("[WARN] No MongoDB URI found in .env")
 
 
 # ---------- Request/Response models ----------
@@ -49,9 +51,12 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     name: str
     email: str
-    password: str
+    password: Optional[str] = None
     role: str  # admin, doctor, nurse, patient
     department: Optional[str] = None
+    assigned_doctor: Optional[str] = None      # doctor email
+    assigned_doctor_name: Optional[str] = None # doctor display name
+    issue: Optional[str] = None                # patient issue / reason
 
 class UserResponse(BaseModel):
     id: str
@@ -194,7 +199,7 @@ def seed_users_from_staff():
 
     if users_to_insert:
         users_collection.insert_many(users_to_insert)
-        print(f"  ✅ Seeded {len(users_to_insert)} users into MongoDB")
+        print(f"  [OK] Seeded {len(users_to_insert)} users into MongoDB")
 
 
 # ---------- Endpoints ----------
@@ -242,16 +247,46 @@ def register(request: RegisterRequest, current_user: dict = Depends(_get_current
     if users_collection.find_one({"email": request.email}):
         raise HTTPException(status_code=409, detail="Email already registered")
 
+    # Auto-generate password if not provided (nurse registering patient)
+    raw_password = request.password or "patient123"
+
     user_doc = {
         "name": request.name,
         "email": request.email,
-        "password": _hash_password(request.password),
+        "password": _hash_password(raw_password),
         "role": request.role,
         "department": request.department or "",
         "created_at": datetime.utcnow().isoformat(),
         "created_by": current_user["email"],
     }
+    # Store patient-specific fields
+    if request.assigned_doctor:
+        user_doc["assigned_doctor"] = request.assigned_doctor
+    if request.assigned_doctor_name:
+        user_doc["assigned_doctor_name"] = request.assigned_doctor_name
+    if request.issue:
+        user_doc["issue"] = request.issue
+
     result = users_collection.insert_one(user_doc)
+
+    # Create notification for assigned doctor
+    if request.assigned_doctor and notifications_collection is not None:
+        issue_text = f" — Issue: {request.issue}" if request.issue else ""
+        notifications_collection.insert_one({
+            "doctor_email": request.assigned_doctor,
+            "doctor_name": request.assigned_doctor_name or "",
+            "type": "new_patient",
+            "title": "New Patient Assigned",
+            "message": f"{request.name} has been assigned to you by {current_user.get('name', current_user['email'])} ({request.department or 'General'}){issue_text}",
+            "patient_name": request.name,
+            "patient_email": request.email,
+            "department": request.department or "",
+            "issue": request.issue or "",
+            "assigned_by": current_user["email"],
+            "assigned_by_name": current_user.get("name", ""),
+            "read": False,
+            "created_at": datetime.utcnow().isoformat(),
+        })
 
     return {
         "message": f"{request.role.capitalize()} account created",
@@ -261,6 +296,9 @@ def register(request: RegisterRequest, current_user: dict = Depends(_get_current
             "email": request.email,
             "role": request.role,
             "department": request.department,
+            "assigned_doctor": request.assigned_doctor,
+            "assigned_doctor_name": request.assigned_doctor_name,
+            "issue": request.issue,
         }
     }
 
@@ -298,6 +336,72 @@ def list_users(current_user: dict = Depends(_get_current_user)):
         })
 
     return {"users": result, "total": len(result)}
+
+
+@router.get("/doctor-list")
+def list_doctors(department: Optional[str] = None):
+    """List doctors, optionally filtered by department."""
+    if users_collection is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    query = {"role": "doctor"}
+    if department:
+        query["department"] = department
+
+    docs = users_collection.find(query, {"password": 0}).sort("name", 1)
+    return {
+        "doctors": [
+            {
+                "id": str(d["_id"]),
+                "name": d["name"],
+                "email": d["email"],
+                "department": d.get("department", ""),
+            }
+            for d in docs
+        ]
+    }
+
+
+@router.get("/notifications")
+def get_notifications(doctor_email: str, unread_only: bool = False):
+    """Get notifications for a doctor."""
+    if notifications_collection is None:
+        return {"notifications": []}
+
+    query = {"doctor_email": doctor_email}
+    if unread_only:
+        query["read"] = False
+
+    results = notifications_collection.find(query).sort("created_at", -1).limit(50)
+    return {
+        "notifications": [
+            {
+                "id": str(n["_id"]),
+                "type": n.get("type", ""),
+                "title": n.get("title", ""),
+                "message": n.get("message", ""),
+                "patient_name": n.get("patient_name", ""),
+                "patient_email": n.get("patient_email", ""),
+                "department": n.get("department", ""),
+                "assigned_by_name": n.get("assigned_by_name", ""),
+                "read": n.get("read", False),
+                "created_at": n.get("created_at", ""),
+            }
+            for n in results
+        ]
+    }
+
+
+@router.put("/notifications/{notif_id}/read")
+def mark_notification_read(notif_id: str):
+    """Mark a notification as read."""
+    if notifications_collection is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    notifications_collection.update_one(
+        {"_id": ObjectId(notif_id)},
+        {"$set": {"read": True}}
+    )
+    return {"message": "Notification marked as read"}
 
 
 @router.delete("/users/{user_id}")

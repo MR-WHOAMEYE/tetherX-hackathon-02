@@ -33,9 +33,9 @@ if GEMINI_API_KEY and GEMINI_API_KEY != "your-gemini-api-key-here":
     try:
         from google import genai
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        print("✅ Gemini AI Assistant initialized successfully")
+        print("[OK] Gemini AI Assistant initialized successfully")
     except Exception as e:
-        print(f"⚠️ Gemini init failed: {e}. Falling back to keyword-based assistant.")
+        print(f"[WARN] Gemini init failed: {e}. Falling back to keyword-based assistant.")
 
 
 # ---------- Request models ----------
@@ -151,7 +151,7 @@ def ai_query(request: QueryRequest):
         try:
             return _gemini_query(query, request.history)
         except Exception as e:
-            print(f"⚠️ Gemini error: {e}. Falling back to keyword-based.")
+            print(f"[WARN] Gemini error: {e}. Falling back to keyword-based.")
 
     # Fallback to keyword-based system
     return _keyword_fallback(query)

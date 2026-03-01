@@ -96,4 +96,13 @@ export const deleteUser = (userId, token) =>
         headers: { Authorization: `Bearer ${token}` }
     });
 
+export const getDoctors = (department) =>
+    authApi.get('/auth/doctor-list', { params: department ? { department } : {} });
+
+export const getNotifications = (doctorEmail, unreadOnly = false) =>
+    authApi.get('/auth/notifications', { params: { doctor_email: doctorEmail, unread_only: unreadOnly } });
+
+export const markNotificationRead = (notifId) =>
+    authApi.put(`/auth/notifications/${notifId}/read`);
+
 export default api;

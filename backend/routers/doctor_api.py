@@ -23,6 +23,7 @@ diagnoses_col = db["diagnoses"] if db is not None else None
 bookings_col = db["appointment_bookings"] if db is not None else None
 admissions_col = db["ward_admissions"] if db is not None else None
 users_col = db["users"] if db is not None else None
+vitals_col = db["patient_vitals"] if db is not None else None
 
 
 # ---- Models ----
@@ -131,6 +132,54 @@ def doctor_dashboard(department: Optional[str] = None, staff_id: Optional[int] =
         "cases": cases_list,
         "emergency_alerts": emergency_alerts,
     }
+
+
+# ---- My Patients (assigned to this doctor) with vitals ----
+@router.get("/my-patients")
+def get_my_patients(doctor_email: str):
+    """Get patients assigned to this doctor with their latest vitals."""
+    if users_col is None:
+        return {"patients": []}
+
+    # Find patients assigned to this doctor
+    patients = users_col.find(
+        {"role": "patient", "assigned_doctor": doctor_email},
+        {"password": 0}
+    ).sort("created_at", -1)
+
+    result = []
+    for p in patients:
+        patient_data = {
+            "id": str(p["_id"]),
+            "name": p.get("name", ""),
+            "email": p.get("email", ""),
+            "department": p.get("department", ""),
+            "issue": p.get("issue", ""),
+            "created_at": p.get("created_at", ""),
+            "assigned_by": p.get("created_by", ""),
+            "latest_vitals": None,
+        }
+
+        # Get latest vitals for this patient
+        if vitals_col is not None:
+            latest = vitals_col.find_one(
+                {"patient_email": p["email"]},
+                sort=[("recorded_at", -1)]
+            )
+            if latest:
+                patient_data["latest_vitals"] = {
+                    "bp_systolic": latest.get("bp_systolic"),
+                    "bp_diastolic": latest.get("bp_diastolic"),
+                    "sugar_level": latest.get("sugar_level"),
+                    "temperature": latest.get("temperature"),
+                    "heart_rate": latest.get("heart_rate"),
+                    "notes": latest.get("notes", ""),
+                    "recorded_at": latest.get("recorded_at", ""),
+                }
+
+        result.append(patient_data)
+
+    return {"patients": result}
 
 
 # ---- Prescriptions ----
@@ -247,8 +296,24 @@ def update_case_status(case_id: str, body: CaseStatusUpdate):
     if body.status == "discharged":
         update_data["discharged_at"] = datetime.utcnow().isoformat()
 
-    result = admissions_col.update_one({"_id": ObjectId(case_id)}, {"$set": update_data})
-    if result.matched_count == 0:
+    # Try matching by ObjectId first, then by string/int case_id field
+    result = None
+    if len(case_id) == 24:
+        try:
+            result = admissions_col.update_one({"_id": ObjectId(case_id)}, {"$set": update_data})
+        except Exception:
+            pass
+
+    if result is None or result.matched_count == 0:
+        # Try by case_id field (string or int)
+        result = admissions_col.update_one({"case_id": case_id}, {"$set": update_data})
+        if result.matched_count == 0:
+            try:
+                result = admissions_col.update_one({"case_id": int(case_id)}, {"$set": update_data})
+            except (ValueError, TypeError):
+                pass
+
+    if result is None or result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Case not found")
     return {"message": f"Case {case_id} updated to {body.status}"}
 

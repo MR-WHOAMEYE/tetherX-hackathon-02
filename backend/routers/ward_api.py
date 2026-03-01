@@ -310,7 +310,7 @@ def seed_wards():
         {"ward_id": "PW-PD", "type": "Private", "department": "Pediatrics", "capacity": 8, "current_patients": 0},
     ]
     wards_col.insert_many(default_wards)
-    print(f"  ✅ Seeded {len(default_wards)} wards")
+    print(f"  [OK] Seeded {len(default_wards)} wards")
 
 
 # Auto-seed on import

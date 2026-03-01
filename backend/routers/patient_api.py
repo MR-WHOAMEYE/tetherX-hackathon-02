@@ -1,6 +1,6 @@
 """
-Patient-facing API — appointments, cases, feedback, booking, profile.
-Uses MongoDB only — no SQLite mock data.
+Patient-facing API — bookings, prescriptions, diagnoses, feedback, profile.
+Uses MongoDB only — no SQLite.
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -22,8 +22,8 @@ bookings_col = mdb["appointment_bookings"] if mdb is not None else None
 profiles_col = mdb["patient_profiles"] if mdb is not None else None
 prescriptions_col = mdb["prescriptions"] if mdb is not None else None
 diagnoses_col = mdb["diagnoses"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-feedback_col = mdb["patient_feedback"] if mdb is not None else None
+feedback_col = mdb["feedback"] if mdb is not None else None
+vitals_col = mdb["patient_vitals"] if mdb is not None else None
 users_col = mdb["users"] if mdb is not None else None
 
 
@@ -45,144 +45,11 @@ class ProfileUpdate(BaseModel):
     allergies: Optional[str] = ""
 
 class FeedbackSubmit(BaseModel):
+    patient_email: Optional[str] = ""
+    patient_name: Optional[str] = ""
     department: str
     feedback_text: str
     rating: int
-
-
-# ---- Appointments (from bookings) ----
-@router.get("/appointments")
-def get_appointments(department: Optional[str] = None):
-    if bookings_col is None:
-        return {"appointments": [], "total": 0, "attended": 0, "missed": 0}
-
-    query = {}
-    if department:
-        query["department"] = department
-    results = list(bookings_col.find(query).sort("created_at", -1))
-
-    attended = sum(1 for r in results if r.get("status") in ("approve", "approved", "completed"))
-    missed = sum(1 for r in results if r.get("status") in ("cancel", "cancelled", "no_show"))
-
-    return {
-        "appointments": [
-            {
-                "id": str(r["_id"]),
-                "department": r.get("department", ""),
-                "slot_time": r.get("preferred_date", "") + " " + r.get("preferred_time", ""),
-                "attended": r.get("status") in ("approve", "approved", "completed"),
-            }
-            for r in results
-        ],
-        "total": len(results),
-        "attended": attended,
-        "missed": missed,
-    }
-
-
-# ---- Cases (from admissions) ----
-@router.get("/cases")
-def get_cases(department: Optional[str] = None, staff_id: Optional[int] = None):
-    if admissions_col is None:
-        return {"cases": [], "total": 0, "open": 0, "in_progress": 0, "resolved": 0, "escalated": 0}
-
-    query = {}
-    if department:
-        query["department"] = department
-
-    results = list(admissions_col.find(query).sort("created_at", -1))
-    return {
-        "cases": [
-            {
-                "id": str(c["_id"]),
-                "department": c.get("department", ""),
-                "severity": c.get("ward_type", "General"),
-                "status": c.get("status", ""),
-                "patient_name": c.get("patient_name", ""),
-                "created_time": c.get("created_at", ""),
-            }
-            for c in results
-        ],
-        "total": len(results),
-        "open": sum(1 for c in results if c.get("status") == "pending"),
-        "in_progress": sum(1 for c in results if c.get("status") == "admitted"),
-        "resolved": sum(1 for c in results if c.get("status") == "discharged"),
-        "escalated": sum(1 for c in results if c.get("status") == "escalated"),
-    }
-
-
-# ---- Feedback ----
-@router.get("/feedback")
-def get_feedback(department: Optional[str] = None):
-    if feedback_col is None:
-        return {"feedback": [], "total": 0, "avg_rating": 0, "avg_sentiment": 0}
-
-    query = {}
-    if department:
-        query["department"] = department
-    feedbacks = list(feedback_col.find(query))
-
-    avg_rating = sum(f.get("rating", 0) for f in feedbacks) / len(feedbacks) if feedbacks else 0
-    avg_sentiment = sum(f.get("sentiment_score", 0) for f in feedbacks) / len(feedbacks) if feedbacks else 0
-
-    return {
-        "feedback": [
-            {
-                "id": str(f["_id"]),
-                "department": f.get("department", ""),
-                "text": f.get("feedback_text", ""),
-                "rating": f.get("rating", 0),
-                "sentiment_score": f.get("sentiment_score", 0),
-            }
-            for f in feedbacks
-        ],
-        "total": len(feedbacks),
-        "avg_rating": round(avg_rating, 2),
-        "avg_sentiment": round(avg_sentiment, 3),
-    }
-
-
-@router.post("/feedback")
-def submit_feedback(body: FeedbackSubmit):
-    if feedback_col is None:
-        raise HTTPException(status_code=503, detail="Database not available")
-
-    sentiment = (body.rating - 3) / 2.0
-    doc = {
-        "department": body.department,
-        "feedback_text": body.feedback_text,
-        "rating": body.rating,
-        "sentiment_score": sentiment,
-        "created_at": datetime.utcnow().isoformat(),
-    }
-    result = feedback_col.insert_one(doc)
-    return {"message": "Feedback submitted", "id": str(result.inserted_id)}
-
-
-# ---- Staff (from users) ----
-@router.get("/staff")
-def get_staff(department: Optional[str] = None):
-    if users_col is None:
-        return {"staff": [], "total": 0}
-
-    query = {"role": {"$in": ["doctor", "nurse"]}}
-    if department:
-        query["department"] = department
-    staff = list(users_col.find(query))
-
-    return {
-        "staff": [
-            {
-                "id": str(s["_id"]),
-                "name": s.get("name", ""),
-                "department": s.get("department", ""),
-                "role": s.get("role", ""),
-                "email": s.get("email", ""),
-            }
-            for s in staff
-        ],
-        "total": len(staff),
-    }
 
 
 # ---- Appointment Booking (MongoDB) ----
@@ -226,7 +93,8 @@ def get_my_bookings(patient_email: Optional[str] = None):
              "preferred_time": r.get("preferred_time", ""),
              "reason": r.get("reason", ""),
              "status": r.get("status", "pending"),
-             "created_at": r.get("created_at", "")}
+             "created_at": r.get("created_at", ""),
+             "action_note": r.get("action_note", "")}
             for r in results
         ]
     }
@@ -269,6 +137,80 @@ def get_my_diagnoses(patient_email: Optional[str] = None):
             for r in results
         ]
     }
+
+
+# ---- My Vitals ----
+@router.get("/my-vitals")
+def get_my_vitals(patient_email: Optional[str] = None):
+    if vitals_col is None:
+        return {"vitals": []}
+    query = {}
+    if patient_email:
+        query["patient_email"] = patient_email
+    results = vitals_col.find(query).sort("recorded_at", -1).limit(50)
+    return {
+        "vitals": [
+            {
+                "id": str(v["_id"]),
+                "bp_systolic": v.get("bp_systolic"),
+                "bp_diastolic": v.get("bp_diastolic"),
+                "sugar_level": v.get("sugar_level"),
+                "temperature": v.get("temperature"),
+                "heart_rate": v.get("heart_rate"),
+                "notes": v.get("notes", ""),
+                "recorded_at": v.get("recorded_at", ""),
+            }
+            for v in results
+        ]
+    }
+
+
+# ---- Feedback (MongoDB) ----
+@router.get("/feedback")
+def get_feedback(department: Optional[str] = None):
+    if feedback_col is None:
+        return {"feedback": [], "total": 0, "avg_rating": 0, "avg_sentiment": 0}
+
+    query = {}
+    if department:
+        query["department"] = department
+
+    docs = list(feedback_col.find(query).sort("created_at", -1))
+    ratings = [d.get("rating", 0) for d in docs if d.get("rating")]
+    avg_rating = sum(ratings) / len(ratings) if ratings else 0
+
+    return {
+        "feedback": [
+            {"id": str(d["_id"]), "department": d.get("department", ""),
+             "text": d.get("feedback_text", ""), "rating": d.get("rating", 0),
+             "sentiment_score": d.get("sentiment_score", 0),
+             "patient_name": d.get("patient_name", ""),
+             "created_at": d.get("created_at", "")}
+            for d in docs
+        ],
+        "total": len(docs),
+        "avg_rating": round(avg_rating, 2),
+        "avg_sentiment": 0,
+    }
+
+
+@router.post("/feedback")
+def submit_feedback(body: FeedbackSubmit):
+    if feedback_col is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    sentiment = (body.rating - 3) / 2.0
+    doc = {
+        "patient_email": body.patient_email,
+        "patient_name": body.patient_name,
+        "department": body.department,
+        "feedback_text": body.feedback_text,
+        "rating": body.rating,
+        "sentiment_score": sentiment,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    result = feedback_col.insert_one(doc)
+    return {"message": "Feedback submitted", "id": str(result.inserted_id)}
 
 
 # ---- Profile (MongoDB) ----
