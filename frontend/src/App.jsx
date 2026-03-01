@@ -1,7 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import FloatingAssistant from './components/FloatingAssistant';
-import Dashboard from './pages/Dashboard';
+//import Dashboard from './pages/Dashboard';
 import Operations from './pages/groups/Operations';
 import Intelligence from './pages/groups/Intelligence';
 import SimulationGroup from './pages/groups/SimulationGroup';
