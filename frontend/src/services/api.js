@@ -1,7 +1,11 @@
 import axios from 'axios';
 
+// In production, set VITE_API_URL to your deployed backend (e.g. https://your-backend.onrender.com/api)
+// In dev, defaults to '/api' which uses Vite proxy to localhost:8000
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
 const api = axios.create({
-    baseURL: '/api',
+    baseURL: API_BASE,
     timeout: 60000,
 });
 
@@ -66,7 +70,7 @@ export const getReport = () => api.get('/reports/generate');
 
 // Auth
 const authApi = axios.create({
-    baseURL: '/api',
+    baseURL: API_BASE,
     timeout: 15000,
 });
 

@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
-from database import engine, Base
 from routers import (
     dashboard, workload, sla, predictive, root_cause,
     digital_twin, simulation, optimization, sentiment,
@@ -10,19 +9,19 @@ from routers import (
     auth, patient_api, doctor_api, nurse_api, admin_api, ward_api
 )
 
-# Create tables
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(
     title="Hospital Operational Intelligence Platform",
     description="AI-Driven Hospital Operational Intelligence & Strategic Decision Platform",
     version="1.0.0",
 )
 
-# CORS
+# CORS — allow Vercel frontend + localhost dev
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
+origins = ALLOWED_ORIGINS.split(",") if ALLOWED_ORIGINS != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,16 +63,4 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    # Auto-seed if DB is empty
-    from sqlalchemy.orm import Session
-    from database import SessionLocal
-    from models import Case
-    db = SessionLocal()
-    case_count = db.query(Case).count()
-    db.close()
-    if case_count == 0:
-        print("Empty database detected. Seeding data...")
-        from seed_data import seed
-        seed()
-        print("Seeding complete!")
     uvicorn.run(app, host="0.0.0.0", port=8000)
