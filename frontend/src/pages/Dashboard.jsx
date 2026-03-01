@@ -179,24 +179,131 @@ export default function Dashboard() {
 
             {/* Row 6B — Case Distribution + Critical Alerts */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <ChartCard title="Cases by Department" subtitle="Distribution of total cases" delay={3}>
-                    <ResponsiveContainer width="100%" height={240}>
-                        <PieChart>
-                            <Pie data={deptWork} dataKey="total_cases" nameKey="department" cx="50%" cy="50%" outerRadius={85} innerRadius={52} paddingAngle={3}>
-                                {deptWork.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                            </Pie>
-                            <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB', fontSize: '11px' }} />
-                        </PieChart>
-                    </ResponsiveContainer>
-                    <div className="flex flex-wrap justify-center gap-3 mt-2">
-                        {deptWork.map((d, i) => (
-                            <div key={d.department} className="flex items-center gap-1.5 text-[10px]">
-                                <div className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                                <span className="text-text-secondary">{d.department}</span>
+                <div
+                    className="bg-white rounded-xl border border-gray-100"
+                    style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)', padding: 0, overflow: 'hidden' }}
+                >
+                    {/* Header */}
+                    <div style={{ padding: '20px 24px 0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div>
+                                <h3 style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', margin: 0, fontFamily: 'var(--font-family-display)' }}>
+                                    Cases by Department
+                                </h3>
+                                <p style={{ fontSize: 12, color: '#94A3B8', marginTop: 3, margin: '3px 0 0' }}>Distribution of total cases</p>
                             </div>
-                        ))}
+                            <div style={{
+                                padding: '4px 10px', borderRadius: 6,
+                                background: '#F0FDFA', border: '1px solid #CCFBF1',
+                                fontSize: 11, fontWeight: 600, color: '#0F766E',
+                            }}>
+                                {deptWork.length} Depts
+                            </div>
+                        </div>
                     </div>
-                </ChartCard>
+
+                    {/* Chart + Legend Side by Side */}
+                    <div style={{ display: 'flex', alignItems: 'center', padding: '16px 24px 24px', gap: 16 }}>
+                        {/* Donut Chart with Center Stat */}
+                        <div style={{ position: 'relative', flexShrink: 0, width: 200, height: 200 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={deptWork}
+                                        dataKey="total_cases"
+                                        nameKey="department"
+                                        cx="50%" cy="50%"
+                                        outerRadius={90}
+                                        innerRadius={58}
+                                        paddingAngle={2}
+                                        stroke="rgba(255,255,255,0.8)"
+                                        strokeWidth={2}
+                                    >
+                                        {deptWork.map((_, i) => (
+                                            <Cell
+                                                key={i}
+                                                fill={COLORS[i % COLORS.length]}
+                                                style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.1))' }}
+                                            />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip
+                                        contentStyle={{
+                                            borderRadius: 10, border: '1px solid #E2E8F0',
+                                            fontSize: 11, boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+                                            padding: '8px 12px',
+                                        }}
+                                        formatter={(value, name) => [`${value} cases`, name]}
+                                    />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            {/* Center KPI */}
+                            <div style={{
+                                position: 'absolute', top: '50%', left: '50%',
+                                transform: 'translate(-50%, -50%)',
+                                textAlign: 'center', pointerEvents: 'none',
+                            }}>
+                                <div style={{ fontSize: 22, fontWeight: 800, color: '#0F172A', lineHeight: 1.1, fontFamily: 'var(--font-family-display)' }}>
+                                    {deptWork.reduce((sum, d) => sum + d.total_cases, 0).toLocaleString()}
+                                </div>
+                                <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 500, marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    Total
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Legend with Stats */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {(() => {
+                                const total = deptWork.reduce((sum, d) => sum + d.total_cases, 0);
+                                const maxDept = Math.max(...deptWork.map(d => d.total_cases));
+                                return deptWork.map((d, i) => {
+                                    const pct = total > 0 ? ((d.total_cases / total) * 100).toFixed(1) : 0;
+                                    const barWidth = maxDept > 0 ? ((d.total_cases / maxDept) * 100).toFixed(0) : 0;
+                                    return (
+                                        <div
+                                            key={d.department}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 10,
+                                                padding: '6px 10px', borderRadius: 8,
+                                                transition: 'background 0.15s ease',
+                                                cursor: 'default',
+                                            }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                                        >
+                                            <div style={{
+                                                width: 10, height: 10, borderRadius: 3,
+                                                background: COLORS[i % COLORS.length],
+                                                flexShrink: 0,
+                                                boxShadow: `0 1px 3px ${COLORS[i % COLORS.length]}40`,
+                                            }} />
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                                                    <span style={{ fontSize: 12, fontWeight: 500, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {d.department}
+                                                    </span>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                                        <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{d.total_cases}</span>
+                                                        <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 500 }}>{pct}%</span>
+                                                    </div>
+                                                </div>
+                                                <div style={{ width: '100%', height: 3, borderRadius: 2, background: '#F1F5F9', overflow: 'hidden' }}>
+                                                    <div style={{
+                                                        width: `${barWidth}%`, height: '100%', borderRadius: 2,
+                                                        background: COLORS[i % COLORS.length],
+                                                        transition: 'width 0.6s ease',
+                                                        opacity: 0.7,
+                                                    }} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                });
+                            })()}
+                        </div>
+                    </div>
+                </div>
 
                 <AlertPreviewPanel summary={summary} deptWork={deptWork} />
             </div>
