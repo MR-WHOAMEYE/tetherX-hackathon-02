@@ -36,22 +36,115 @@ export default function SimulationLab({ embedded }) {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-text-secondary mb-1.5">Add Staff Members</label>
-                            <input type="range" min="0" max="10" value={params.add_staff} onChange={e => setParams({ ...params, add_staff: +e.target.value })}
-                                className="w-full accent-primary" />
-                            <span className="text-sm font-semibold text-primary">+{params.add_staff} staff</span>
+                            <label className="block text-xs font-semibold text-text-secondary mb-2">Add Staff Members</label>
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: 0,
+                                borderRadius: 12, border: '1px solid #CCFBF1', overflow: 'hidden',
+                                background: '#F0FDFA',
+                            }}>
+                                <button
+                                    onClick={() => setParams({ ...params, add_staff: Math.max(0, params.add_staff - 1) })}
+                                    disabled={params.add_staff <= 0}
+                                    style={{
+                                        width: 48, height: 44, border: 'none', cursor: params.add_staff <= 0 ? 'not-allowed' : 'pointer',
+                                        background: params.add_staff <= 0 ? '#F8FAFC' : '#FFFFFF',
+                                        color: params.add_staff <= 0 ? '#CBD5E1' : '#0F766E',
+                                        fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        borderRight: '1px solid #CCFBF1', transition: 'all 0.15s ease',
+                                    }}
+                                >−</button>
+                                <div style={{
+                                    flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 700,
+                                    color: '#0F766E', padding: '10px 0',
+                                }}>
+                                    +{params.add_staff} <span style={{ fontSize: 12, fontWeight: 500, color: '#64748B' }}>staff</span>
+                                </div>
+                                <button
+                                    onClick={() => setParams({ ...params, add_staff: Math.min(10, params.add_staff + 1) })}
+                                    disabled={params.add_staff >= 10}
+                                    style={{
+                                        width: 48, height: 44, border: 'none', cursor: params.add_staff >= 10 ? 'not-allowed' : 'pointer',
+                                        background: params.add_staff >= 10 ? '#F8FAFC' : '#FFFFFF',
+                                        color: params.add_staff >= 10 ? '#CBD5E1' : '#0F766E',
+                                        fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        borderLeft: '1px solid #CCFBF1', transition: 'all 0.15s ease',
+                                    }}
+                                >+</button>
+                            </div>
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-text-secondary mb-1.5">Extend Shift Hours</label>
-                            <input type="range" min="0" max="6" step="0.5" value={params.extend_shift_hours} onChange={e => setParams({ ...params, extend_shift_hours: +e.target.value })}
-                                className="w-full accent-secondary" />
-                            <span className="text-sm font-semibold text-secondary">+{params.extend_shift_hours}h per shift</span>
+                            <label className="block text-xs font-semibold text-text-secondary mb-2">Extend Shift Hours</label>
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: 0,
+                                borderRadius: 12, border: '1px solid #BFDBFE', overflow: 'hidden',
+                                background: '#EFF6FF',
+                            }}>
+                                <button
+                                    onClick={() => setParams({ ...params, extend_shift_hours: Math.max(0, +(params.extend_shift_hours - 0.5).toFixed(1)) })}
+                                    disabled={params.extend_shift_hours <= 0}
+                                    style={{
+                                        width: 48, height: 44, border: 'none', cursor: params.extend_shift_hours <= 0 ? 'not-allowed' : 'pointer',
+                                        background: params.extend_shift_hours <= 0 ? '#F8FAFC' : '#FFFFFF',
+                                        color: params.extend_shift_hours <= 0 ? '#CBD5E1' : '#0284C7',
+                                        fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        borderRight: '1px solid #BFDBFE', transition: 'all 0.15s ease',
+                                    }}
+                                >−</button>
+                                <div style={{
+                                    flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 700,
+                                    color: '#0284C7', padding: '10px 0',
+                                }}>
+                                    +{params.extend_shift_hours}h <span style={{ fontSize: 12, fontWeight: 500, color: '#64748B' }}>per shift</span>
+                                </div>
+                                <button
+                                    onClick={() => setParams({ ...params, extend_shift_hours: Math.min(6, +(params.extend_shift_hours + 0.5).toFixed(1)) })}
+                                    disabled={params.extend_shift_hours >= 6}
+                                    style={{
+                                        width: 48, height: 44, border: 'none', cursor: params.extend_shift_hours >= 6 ? 'not-allowed' : 'pointer',
+                                        background: params.extend_shift_hours >= 6 ? '#F8FAFC' : '#FFFFFF',
+                                        color: params.extend_shift_hours >= 6 ? '#CBD5E1' : '#0284C7',
+                                        fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        borderLeft: '1px solid #BFDBFE', transition: 'all 0.15s ease',
+                                    }}
+                                >+</button>
+                            </div>
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-text-secondary mb-1.5">Reallocate Cases to Other Depts</label>
-                            <input type="range" min="0" max="50" value={params.reallocate_cases} onChange={e => setParams({ ...params, reallocate_cases: +e.target.value })}
-                                className="w-full accent-accent" />
-                            <span className="text-sm font-semibold text-accent">{params.reallocate_cases} cases</span>
+                            <label className="block text-xs font-semibold text-text-secondary mb-2">Reallocate Cases to Other Depts</label>
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: 0,
+                                borderRadius: 12, border: '1px solid #A7F3D0', overflow: 'hidden',
+                                background: '#ECFDF5',
+                            }}>
+                                <button
+                                    onClick={() => setParams({ ...params, reallocate_cases: Math.max(0, params.reallocate_cases - 5) })}
+                                    disabled={params.reallocate_cases <= 0}
+                                    style={{
+                                        width: 48, height: 44, border: 'none', cursor: params.reallocate_cases <= 0 ? 'not-allowed' : 'pointer',
+                                        background: params.reallocate_cases <= 0 ? '#F8FAFC' : '#FFFFFF',
+                                        color: params.reallocate_cases <= 0 ? '#CBD5E1' : '#10B981',
+                                        fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        borderRight: '1px solid #A7F3D0', transition: 'all 0.15s ease',
+                                    }}
+                                >−</button>
+                                <div style={{
+                                    flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 700,
+                                    color: '#10B981', padding: '10px 0',
+                                }}>
+                                    {params.reallocate_cases} <span style={{ fontSize: 12, fontWeight: 500, color: '#64748B' }}>cases</span>
+                                </div>
+                                <button
+                                    onClick={() => setParams({ ...params, reallocate_cases: Math.min(50, params.reallocate_cases + 5) })}
+                                    disabled={params.reallocate_cases >= 50}
+                                    style={{
+                                        width: 48, height: 44, border: 'none', cursor: params.reallocate_cases >= 50 ? 'not-allowed' : 'pointer',
+                                        background: params.reallocate_cases >= 50 ? '#F8FAFC' : '#FFFFFF',
+                                        color: params.reallocate_cases >= 50 ? '#CBD5E1' : '#10B981',
+                                        fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        borderLeft: '1px solid #A7F3D0', transition: 'all 0.15s ease',
+                                    }}
+                                >+</button>
+                            </div>
                         </div>
                         <button onClick={handleRun} disabled={running}
                             className="w-full py-3 rounded-xl bg-gradient-to-r from-primary to-primary-light text-white font-semibold text-sm
