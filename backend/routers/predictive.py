@@ -3,7 +3,6 @@ Predictive Analytics — workload forecast, burnout prediction, surge detection.
 Uses MongoDB only — no SQLite mock data.
 """
 from fastapi import APIRouter
-from pymongo import MongoClient
 from collections import defaultdict
 import numpy as np
 import os
@@ -13,15 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/predictive", tags=["Predictive Analytics"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-users_col = mdb["users"] if mdb is not None else None
-
-
 @router.get("/forecast")
 def workload_forecast():
     """ARIMA-style workload forecast for next 7 days using moving average + trend."""
@@ -68,7 +61,6 @@ def workload_forecast():
 
     historical = [{"date": d, "cases": v} for d, v in sorted_days[-14:]]
     return {"historical": historical, "forecast": forecast}
-
 
 @router.get("/burnout")
 def burnout_prediction():
@@ -120,7 +112,6 @@ def burnout_prediction():
         })
     results.sort(key=lambda x: x["risk_probability"], reverse=True)
     return results
-
 
 @router.get("/surge")
 def surge_detection():

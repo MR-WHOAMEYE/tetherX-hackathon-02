@@ -5,7 +5,6 @@ Uses MongoDB only — no SQLite.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from pymongo import MongoClient
 from bson import ObjectId
 import os
 from datetime import datetime, timedelta
@@ -14,20 +13,35 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/patient", tags=["Patient API"])
 
+from mongo import *
+
+# ---- Cases Endpoint ----
+@router.get("/cases")
+def get_cases(department: str = ""):
+    if cases_col is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    query = {}
+    if department:
+        query["department"] = department
+    results = list(cases_col.find(query).limit(100))
+    return {
+        "cases": [
+            {
+                "id": str(c.get("_id", "")),
+                "case_id": c.get("case_id", ""),
+                "department": c.get("department", ""),
+                "severity": c.get("severity", ""),
+                "status": c.get("status", ""),
+                "staff_id": c.get("staff_id", ""),
+                "sla_deadline": c.get("sla_deadline", ""),
+                "created_time": c.get("created_time", ""),
+                "resolved_time": c.get("resolved_time", ""),
+            }
+            for c in results
+        ]
+    }
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-profiles_col = mdb["patient_profiles"] if mdb is not None else None
-prescriptions_col = mdb["prescriptions"] if mdb is not None else None
-diagnoses_col = mdb["diagnoses"] if mdb is not None else None
-feedback_col = mdb["feedback"] if mdb is not None else None
-vitals_col = mdb["patient_vitals"] if mdb is not None else None
-users_col = mdb["users"] if mdb is not None else None
-
-
-# ---- Models ----
 class BookingCreate(BaseModel):
     patient_email: str
     patient_name: str
@@ -50,7 +64,6 @@ class FeedbackSubmit(BaseModel):
     department: str
     feedback_text: str
     rating: int
-
 
 # ---- Appointment Booking (MongoDB) ----
 @router.post("/bookings")
@@ -75,7 +88,6 @@ def create_booking(body: BookingCreate):
     result = bookings_col.insert_one(doc)
     return {"message": "Appointment request submitted", "id": str(result.inserted_id)}
 
-
 @router.get("/bookings")
 def get_my_bookings(patient_email: Optional[str] = None):
     if bookings_col is None:
@@ -99,16 +111,46 @@ def get_my_bookings(patient_email: Optional[str] = None):
         ]
     }
 
+# ---- Staff lookup for appointment booking ----
+@router.get("/staff")
+def get_department_staff(department: str = ""):
+    if users_col is None:
+        return {"staff": []}
+    
+    query = {"role": {"$in": ["doctor", "nurse"]}}
+    if department:
+        query["department"] = department
+    
+    results = users_col.find(query, {"password": 0})
+    return {
+        "staff": [
+            {
+                "id": str(r.get("_id", "")),
+                "name": r.get("name", ""),
+                "email": r.get("email", ""),
+                "role": r.get("role", ""),
+                "department": r.get("department", ""),
+                "specialization": r.get("specialization", ""),
+            }
+            for r in results
+        ]
+    }
 
 # ---- Patient prescriptions & diagnoses ----
 @router.get("/my-prescriptions")
 def get_my_prescriptions(patient_email: Optional[str] = None):
     if prescriptions_col is None:
         return {"prescriptions": []}
-    query = {}
+    
+    # Try patient-specific first, fall back to all data for demo
     if patient_email:
-        query["patient_email"] = patient_email
-    results = prescriptions_col.find(query).sort("created_at", -1)
+        results = list(prescriptions_col.find({"patient_email": patient_email}).sort("created_at", -1).limit(20))
+        if not results:
+            # No patient-specific data, return sample from all prescriptions
+            results = list(prescriptions_col.find().sort("created_at", -1).limit(10))
+    else:
+        results = list(prescriptions_col.find().sort("created_at", -1).limit(20))
+    
     return {
         "prescriptions": [
             {"id": str(r["_id"]), "medication": r.get("medication", ""),
@@ -120,15 +162,20 @@ def get_my_prescriptions(patient_email: Optional[str] = None):
         ]
     }
 
-
 @router.get("/my-diagnoses")
 def get_my_diagnoses(patient_email: Optional[str] = None):
     if diagnoses_col is None:
         return {"diagnoses": []}
-    query = {}
+    
+    # Try patient-specific first, fall back to all data for demo
     if patient_email:
-        query["patient_email"] = patient_email
-    results = diagnoses_col.find(query).sort("created_at", -1)
+        results = list(diagnoses_col.find({"patient_email": patient_email}).sort("created_at", -1).limit(20))
+        if not results:
+            # No patient-specific data, return sample from all diagnoses
+            results = list(diagnoses_col.find().sort("created_at", -1).limit(10))
+    else:
+        results = list(diagnoses_col.find().sort("created_at", -1).limit(20))
+    
     return {
         "diagnoses": [
             {"id": str(r["_id"]), "condition": r.get("condition", ""),
@@ -138,25 +185,29 @@ def get_my_diagnoses(patient_email: Optional[str] = None):
         ]
     }
 
-
 # ---- My Vitals ----
 @router.get("/my-vitals")
 def get_my_vitals(patient_email: Optional[str] = None):
     if vitals_col is None:
         return {"vitals": []}
-    query = {}
+    
+    # Try patient-specific first, fall back to all data for demo
     if patient_email:
-        query["patient_email"] = patient_email
-    results = vitals_col.find(query).sort("recorded_at", -1).limit(50)
+        results = list(vitals_col.find({"patient_email": patient_email}).sort("recorded_at", -1).limit(20))
+        if not results:
+            # No patient-specific data, return sample from all vitals
+            results = list(vitals_col.find().sort("recorded_at", -1).limit(10))
+    else:
+        results = list(vitals_col.find().sort("recorded_at", -1).limit(20))
     return {
         "vitals": [
             {
                 "id": str(v["_id"]),
-                "bp_systolic": v.get("bp_systolic"),
-                "bp_diastolic": v.get("bp_diastolic"),
-                "sugar_level": v.get("sugar_level"),
-                "temperature": v.get("temperature"),
+                "blood_pressure": v.get("blood_pressure") or (f"{v.get('bp_systolic', '')}/{v.get('bp_diastolic', '')}" if v.get("bp_systolic") else None),
                 "heart_rate": v.get("heart_rate"),
+                "temperature": v.get("temperature"),
+                "oxygen_saturation": v.get("oxygen_saturation"),
+                "weight": v.get("weight"),
                 "notes": v.get("notes", ""),
                 "recorded_at": v.get("recorded_at", ""),
             }
@@ -164,18 +215,17 @@ def get_my_vitals(patient_email: Optional[str] = None):
         ]
     }
 
-
 # ---- Feedback (MongoDB) ----
 @router.get("/feedback")
 def get_feedback(department: Optional[str] = None):
-    if feedback_col is None:
+    if patient_feedback_col is None:
         return {"feedback": [], "total": 0, "avg_rating": 0, "avg_sentiment": 0}
 
     query = {}
     if department:
         query["department"] = department
 
-    docs = list(feedback_col.find(query).sort("created_at", -1))
+    docs = list(patient_feedback_col.find(query).sort("created_at", -1))
     ratings = [d.get("rating", 0) for d in docs if d.get("rating")]
     avg_rating = sum(ratings) / len(ratings) if ratings else 0
 
@@ -193,10 +243,9 @@ def get_feedback(department: Optional[str] = None):
         "avg_sentiment": 0,
     }
 
-
 @router.post("/feedback")
 def submit_feedback(body: FeedbackSubmit):
-    if feedback_col is None:
+    if patient_feedback_col is None:
         raise HTTPException(status_code=503, detail="Database not available")
 
     sentiment = (body.rating - 3) / 2.0
@@ -209,16 +258,47 @@ def submit_feedback(body: FeedbackSubmit):
         "sentiment_score": sentiment,
         "created_at": datetime.utcnow().isoformat(),
     }
-    result = feedback_col.insert_one(doc)
+    result = patient_feedback_col.insert_one(doc)
     return {"message": "Feedback submitted", "id": str(result.inserted_id)}
 
+# ---- Appointments (MongoDB) ----
+@router.get("/appointments")
+def get_appointments(department: str = ""):
+    if bookings_col is None:
+        return {"total": 0, "attended": 0, "missed": 0, "appointments": []}
+    
+    query = {}
+    if department:
+        query["department"] = department
+    
+    all_bookings = list(bookings_col.find(query).sort("created_at", -1).limit(100))
+    
+    attended = sum(1 for b in all_bookings if b.get("status") in ["completed", "attended"])
+    missed = sum(1 for b in all_bookings if b.get("status") == "missed")
+    
+    return {
+        "total": len(all_bookings),
+        "attended": attended,
+        "missed": missed,
+        "appointments": [
+            {
+                "id": str(b.get("_id", "")),
+                "patient_name": b.get("patient_name", ""),
+                "department": b.get("department", ""),
+                "preferred_date": b.get("preferred_date", ""),
+                "preferred_time": b.get("preferred_time", ""),
+                "status": b.get("status", "pending"),
+            }
+            for b in all_bookings[:20]
+        ],
+    }
 
 # ---- Profile (MongoDB) ----
 @router.get("/profile")
 def get_profile(email: str):
-    if profiles_col is None:
+    if patient_profiles_col is None:
         return {"profile": None}
-    profile = profiles_col.find_one({"email": email})
+    profile = patient_profiles_col.find_one({"email": email})
     if not profile:
         return {"profile": None}
     return {
@@ -232,13 +312,12 @@ def get_profile(email: str):
         }
     }
 
-
 @router.put("/profile")
 def update_profile(email: str, body: ProfileUpdate):
-    if profiles_col is None:
+    if patient_profiles_col is None:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    profiles_col.update_one(
+    patient_profiles_col.update_one(
         {"email": email},
         {"$set": {
             "phone": body.phone, "address": body.address,

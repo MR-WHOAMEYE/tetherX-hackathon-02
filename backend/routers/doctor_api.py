@@ -5,7 +5,6 @@ Uses MongoDB only — no SQLite mock data.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from pymongo import MongoClient
 from bson import ObjectId
 import os
 from datetime import datetime
@@ -14,19 +13,9 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/doctor", tags=["Doctor API"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-db = client["zero_intercept"] if client is not None else None
-prescriptions_col = db["prescriptions"] if db is not None else None
-diagnoses_col = db["diagnoses"] if db is not None else None
-bookings_col = db["appointment_bookings"] if db is not None else None
-admissions_col = db["ward_admissions"] if db is not None else None
-users_col = db["users"] if db is not None else None
-vitals_col = db["patient_vitals"] if db is not None else None
-
-
-# ---- Models ----
 class PrescriptionCreate(BaseModel):
     patient_email: str
     patient_name: str
@@ -50,7 +39,6 @@ class AppointmentAction(BaseModel):
     action: str  # approve, reschedule, cancel
     new_time: Optional[str] = None
     reason: Optional[str] = ""
-
 
 # ---- Doctor Dashboard data ----
 @router.get("/dashboard")
@@ -133,7 +121,6 @@ def doctor_dashboard(department: Optional[str] = None, staff_id: Optional[int] =
         "emergency_alerts": emergency_alerts,
     }
 
-
 # ---- My Patients (assigned to this doctor) with vitals ----
 @router.get("/my-patients")
 def get_my_patients(doctor_email: str):
@@ -181,7 +168,6 @@ def get_my_patients(doctor_email: str):
 
     return {"patients": result}
 
-
 # ---- Prescriptions ----
 @router.post("/prescriptions")
 def add_prescription(body: PrescriptionCreate):
@@ -203,7 +189,6 @@ def add_prescription(body: PrescriptionCreate):
     }
     result = prescriptions_col.insert_one(doc)
     return {"message": "Prescription added", "id": str(result.inserted_id)}
-
 
 @router.get("/prescriptions")
 def get_prescriptions(patient_email: Optional[str] = None, department: Optional[str] = None):
@@ -236,7 +221,6 @@ def get_prescriptions(patient_email: Optional[str] = None, department: Optional[
         ]
     }
 
-
 # ---- Diagnoses ----
 @router.post("/diagnoses")
 def add_diagnosis(body: DiagnosisCreate):
@@ -255,7 +239,6 @@ def add_diagnosis(body: DiagnosisCreate):
     }
     result = diagnoses_col.insert_one(doc)
     return {"message": "Diagnosis added", "id": str(result.inserted_id)}
-
 
 @router.get("/diagnoses")
 def get_diagnoses(patient_email: Optional[str] = None, department: Optional[str] = None):
@@ -284,7 +267,6 @@ def get_diagnoses(patient_email: Optional[str] = None, department: Optional[str]
             for r in results
         ]
     }
-
 
 # ---- Case Status Update (via admissions) ----
 @router.put("/cases/{case_id}/status")
@@ -317,7 +299,6 @@ def update_case_status(case_id: str, body: CaseStatusUpdate):
         raise HTTPException(status_code=404, detail="Case not found")
     return {"message": f"Case {case_id} updated to {body.status}"}
 
-
 # ---- Appointment Bookings ----
 @router.get("/bookings")
 def get_bookings(department: Optional[str] = None, status: Optional[str] = None):
@@ -349,7 +330,6 @@ def get_bookings(department: Optional[str] = None, status: Optional[str] = None)
             for r in results
         ]
     }
-
 
 @router.put("/bookings/{booking_id}")
 def update_booking(booking_id: str, body: AppointmentAction):

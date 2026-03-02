@@ -3,7 +3,6 @@ Resolution & SLA analytics.
 Uses MongoDB only — no SQLite mock data.
 """
 from fastapi import APIRouter
-from pymongo import MongoClient
 from collections import defaultdict
 import os
 from dotenv import load_dotenv
@@ -11,14 +10,9 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/sla", tags=["Resolution & SLA"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-
-
 @router.get("/resolution-trend")
 def resolution_trend():
     if bookings_col is None:
@@ -56,7 +50,6 @@ def resolution_trend():
         for day, d in sorted(daily.items())
     ]
 
-
 @router.get("/delayed-percentage")
 def delayed_percentage():
     if bookings_col is None:
@@ -78,7 +71,6 @@ def delayed_percentage():
         "total_resolved": len(responded),
         "delayed_count": delayed,
     }
-
 
 @router.get("/violation-risk")
 def violation_risk():
@@ -117,7 +109,6 @@ def violation_risk():
 
     risk_data.sort(key=lambda x: x["risk_pct"], reverse=True)
     return risk_data[:50]
-
 
 @router.get("/department-efficiency")
 def department_efficiency():

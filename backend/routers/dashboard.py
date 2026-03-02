@@ -1,30 +1,160 @@
-"""
-Dashboard summary — serves real metrics from MongoDB.
+﻿"""
+Dashboard summary - serves real metrics from MongoDB.
 SLA from booking response timestamps, resolution from ward admissions,
 burnout from doctor/nurse daily activity, health index from composite.
+Optimized with aggregation pipelines and caching for faster loading.
 """
 from fastapi import APIRouter
-from pymongo import MongoClient
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import concurrent.futures
+import time
+from typing import Any, Dict, Optional
 
 load_dotenv()
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
-# MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
+from mongo import *
 
-users_col = mdb["users"] if mdb is not None else None
-prescriptions_col = mdb["prescriptions"] if mdb is not None else None
-diagnoses_col = mdb["diagnoses"] if mdb is not None else None
-vitals_col = mdb["patient_vitals"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-wards_col = mdb["wards"] if mdb is not None else None
+# Simple in-memory cache with TTL
+class TTLCache:
+    def __init__(self, ttl_seconds: int = 30):
+        self._cache: Dict[str, tuple[float, Any]] = {}
+        self._ttl = ttl_seconds
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+    
+    def set(self, key: str, value: Any):
+        self._cache[key] = (time.time(), value)
+    
+    def clear(self):
+        self._cache.clear()
 
+# Cache dashboard data for 30 seconds to avoid repeated DB queries
+_dashboard_cache = TTLCache(ttl_seconds=30)
+
+def _get_user_counts():
+    """Get all user counts in a single aggregation."""
+    if users_col is None:
+        return {"total": 0, "doctors": 0, "nurses": 0}
+    pipeline = [
+        {"$facet": {
+            "total": [{"$count": "count"}],
+            "doctors": [{"$match": {"role": "doctor"}}, {"$count": "count"}],
+            "nurses": [{"$match": {"role": "nurse"}}, {"$count": "count"}]
+        }}
+    ]
+    result = list(users_col.aggregate(pipeline))
+    if result:
+        r = result[0]
+        return {
+            "total": r["total"][0]["count"] if r["total"] else 0,
+            "doctors": r["doctors"][0]["count"] if r["doctors"] else 0,
+            "nurses": r["nurses"][0]["count"] if r["nurses"] else 0
+        }
+    return {"total": 0, "doctors": 0, "nurses": 0}
+
+def _get_prescription_counts():
+    """Get prescription counts in a single aggregation."""
+    if prescriptions_col is None:
+        return {"total": 0, "active": 0}
+    pipeline = [
+        {"$facet": {
+            "total": [{"$count": "count"}],
+            "active": [{"$match": {"status": "active"}}, {"$count": "count"}]
+        }}
+    ]
+    result = list(prescriptions_col.aggregate(pipeline))
+    if result:
+        r = result[0]
+        return {
+            "total": r["total"][0]["count"] if r["total"] else 0,
+            "active": r["active"][0]["count"] if r["active"] else 0
+        }
+    return {"total": 0, "active": 0}
+
+def _get_booking_counts():
+    """Get booking counts in a single aggregation."""
+    if bookings_col is None:
+        return {"total": 0, "pending": 0, "approved": 0}
+    pipeline = [
+        {"$facet": {
+            "total": [{"$count": "count"}],
+            "pending": [{"$match": {"status": "pending"}}, {"$count": "count"}],
+            "approved": [{"$match": {"status": {"$in": ["approve", "approved"]}}}, {"$count": "count"}]
+        }}
+    ]
+    result = list(bookings_col.aggregate(pipeline))
+    if result:
+        r = result[0]
+        return {
+            "total": r["total"][0]["count"] if r["total"] else 0,
+            "pending": r["pending"][0]["count"] if r["pending"] else 0,
+            "approved": r["approved"][0]["count"] if r["approved"] else 0
+        }
+    return {"total": 0, "pending": 0, "approved": 0}
+
+def _get_admission_counts():
+    """Get admission counts in a single aggregation."""
+    if admissions_col is None:
+        return {"total": 0, "admitted": 0, "discharged": 0}
+    pipeline = [
+        {"$facet": {
+            "total": [{"$count": "count"}],
+            "admitted": [{"$match": {"status": "admitted"}}, {"$count": "count"}],
+            "discharged": [{"$match": {"status": "discharged"}}, {"$count": "count"}]
+        }}
+    ]
+    result = list(admissions_col.aggregate(pipeline))
+    if result:
+        r = result[0]
+        return {
+            "total": r["total"][0]["count"] if r["total"] else 0,
+            "admitted": r["admitted"][0]["count"] if r["admitted"] else 0,
+            "discharged": r["discharged"][0]["count"] if r["discharged"] else 0
+        }
+    return {"total": 0, "admitted": 0, "discharged": 0}
+
+def _get_diagnoses_count():
+    """Get diagnoses count."""
+    if diagnoses_col is None:
+        return 0
+    return diagnoses_col.estimated_document_count()
+
+def _get_ward_stats():
+    """Get ward capacity stats in a single aggregation."""
+    if wards_col is None:
+        return {"capacity": 0, "occupied": 0}
+    pipeline = [
+        {"$group": {
+            "_id": None,
+            "capacity": {"$sum": "$capacity"},
+            "occupied": {"$sum": "$current_patients"}
+        }}
+    ]
+    result = list(wards_col.aggregate(pipeline))
+    if result:
+        return {"capacity": result[0].get("capacity", 0), "occupied": result[0].get("occupied", 0)}
+    return {"capacity": 0, "occupied": 0}
+
+def _get_burnout_high_load_count():
+    """Get count of doctors with high prescription load."""
+    if prescriptions_col is None:
+        return 0
+    pipeline = [
+        {"$group": {"_id": "$doctor_name", "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gte": 5}}},
+        {"$count": "high_load"}
+    ]
+    result = list(prescriptions_col.aggregate(pipeline))
+    return result[0]["high_load"] if result else 0
 
 @router.get("/summary")
 def get_dashboard_summary():
@@ -34,36 +164,55 @@ def get_dashboard_summary():
     - Resolution: avg(discharge - admit) from ward_admissions
     - Burnout: % of doctors with high daily prescription load
     - Health Index: weighted composite
+    Uses caching to improve loading performance.
     """
-    # ── Counts ──
-    total_users = users_col.count_documents({}) if users_col is not None else 0
-    total_doctors = users_col.count_documents({"role": "doctor"}) if users_col is not None else 0
-    total_nurses = users_col.count_documents({"role": "nurse"}) if users_col is not None else 0
+    # Check cache first
+    cached = _dashboard_cache.get("summary")
+    if cached is not None:
+        return cached
+    
+    # Run independent queries in parallel using ThreadPoolExecutor
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        user_future = executor.submit(_get_user_counts)
+        rx_future = executor.submit(_get_prescription_counts)
+        bk_future = executor.submit(_get_booking_counts)
+        adm_future = executor.submit(_get_admission_counts)
+        dx_future = executor.submit(_get_diagnoses_count)
+        ward_future = executor.submit(_get_ward_stats)
+        burnout_future = executor.submit(_get_burnout_high_load_count)
+        
+        users = user_future.result()
+        rx = rx_future.result()
+        bk = bk_future.result()
+        adm = adm_future.result()
+        total_dx = dx_future.result()
+        ward_stats = ward_future.result()
+        high_load = burnout_future.result()
 
-    total_rx = prescriptions_col.count_documents({}) if prescriptions_col is not None else 0
-    active_rx = prescriptions_col.count_documents({"status": "active"}) if prescriptions_col is not None else 0
-    total_dx = diagnoses_col.count_documents({}) if diagnoses_col is not None else 0
+    total_doctors = users["doctors"]
+    total_nurses = users["nurses"]
+    total_rx = rx["total"]
+    active_rx = rx["active"]
+    total_bookings = bk["total"]
+    pending_bk = bk["pending"]
+    approved_bk = bk["approved"]
+    admitted_count = adm["admitted"]
+    discharged_count = adm["discharged"]
+    total_capacity = ward_stats["capacity"]
+    total_occupied = ward_stats["occupied"]
 
-    total_bookings = bookings_col.count_documents({}) if bookings_col is not None else 0
-    pending_bk = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
-    approved_bk = bookings_col.count_documents({"status": {"$in": ["approve", "approved"]}}) if bookings_col is not None else 0
-
-    total_admissions = admissions_col.count_documents({}) if admissions_col is not None else 0
-    admitted_count = admissions_col.count_documents({"status": "admitted"}) if admissions_col is not None else 0
-    discharged_count = admissions_col.count_documents({"status": "discharged"}) if admissions_col is not None else 0
-
-    # ── Map to dashboard shape ──
+    # Map to dashboard shape
     total_cases = total_bookings + total_rx + total_dx
     active_cases = pending_bk + active_rx + admitted_count
     resolved_cases = approved_bk + (total_rx - active_rx) + discharged_count
 
-    # ── SLA Compliance (real timestamps) ──
+    # SLA Compliance (optimized with limit)
     sla_compliance = 100.0
     if bookings_col is not None:
         responded = list(bookings_col.find({
             "responded_at": {"$ne": None},
             "sla_deadline": {"$ne": None}
-        }, {"responded_at": 1, "sla_deadline": 1, "created_at": 1}))
+        }, {"responded_at": 1, "sla_deadline": 1}).limit(500))
 
         if responded:
             met = 0
@@ -74,17 +223,17 @@ def get_dashboard_summary():
                     if resp_dt <= sla_dt:
                         met += 1
                 except Exception:
-                    met += 1  # gracefully count as met if parsing fails
+                    met += 1
             sla_compliance = round(met / len(responded) * 100, 1)
 
-    # ── Resolution Time (from ward admissions: discharged - admitted) ──
+    # Resolution Time (optimized with limit)
     avg_resolution = 0
     if admissions_col is not None:
         discharged = list(admissions_col.find({
             "status": "discharged",
             "admitted_at": {"$ne": None},
             "discharged_at": {"$ne": None}
-        }, {"admitted_at": 1, "discharged_at": 1}))
+        }, {"admitted_at": 1, "discharged_at": 1}).limit(200))
 
         if discharged:
             durations = []
@@ -100,32 +249,17 @@ def get_dashboard_summary():
             if durations:
                 avg_resolution = round(sum(durations) / len(durations), 2)
 
-    # ── Burnout Risk (doctors with > 5 prescriptions = high workload) ──
-    burnout_risk = 0
-    if prescriptions_col is not None and total_doctors > 0:
-        pipeline = [
-            {"$group": {"_id": "$doctor_name", "count": {"$sum": 1}}},
-            {"$match": {"count": {"$gte": 5}}},
-            {"$count": "high_load"}
-        ]
-        result = list(prescriptions_col.aggregate(pipeline))
-        high_load = result[0]["high_load"] if result else 0
-        burnout_risk = round(high_load / total_doctors * 100, 1)
+    # Burnout Risk
+    burnout_risk = round(high_load / max(total_doctors, 1) * 100, 1) if total_doctors > 0 else 0
 
-    # ── Bed Occupancy (from wards) ──
-    total_capacity = 0
-    total_occupied = 0
-    if wards_col is not None:
-        for w in wards_col.find():
-            total_capacity += w.get("capacity", 0)
-            total_occupied += w.get("current_patients", 0)
+    # Bed Occupancy
     bed_occupancy = round(total_occupied / max(total_capacity, 1) * 100, 1)
 
-    # ── Health Index (weighted composite 0-100) ──
+    # Health Index (weighted composite 0-100)
     sla_score = sla_compliance
-    resolution_score = max(0, 100 - avg_resolution * 2)  # lower resolution = better
-    burnout_score = max(0, 100 - burnout_risk * 2)  # lower burnout = better
-    occupancy_score = 100 - abs(bed_occupancy - 70) * 2  # 70% is ideal occupancy
+    resolution_score = max(0, 100 - avg_resolution * 2)
+    burnout_score = max(0, 100 - burnout_risk * 2)
+    occupancy_score = 100 - abs(bed_occupancy - 70) * 2
 
     health_index = round(
         sla_score * 0.30 +
@@ -136,7 +270,7 @@ def get_dashboard_summary():
     )
     health_index = max(0, min(100, health_index))
 
-    return {
+    result = {
         "total_cases": total_cases,
         "active_cases": active_cases,
         "resolved_cases": resolved_cases,
@@ -154,3 +288,7 @@ def get_dashboard_summary():
             "burnout_trend": round(burnout_risk - 10, 1),
         }
     }
+    
+    # Cache the result for 30 seconds
+    _dashboard_cache.set("summary", result)
+    return result

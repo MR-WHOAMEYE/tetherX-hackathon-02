@@ -5,7 +5,6 @@ Auto-seeds users from the SQLite Staff table on first run.
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
-from pymongo import MongoClient
 from bson import ObjectId
 import bcrypt
 import jwt
@@ -16,33 +15,19 @@ from datetime import datetime, timedelta
 
 load_dotenv()
 
+# JWT Configuration
+JWT_SECRET = os.getenv("JWT_SECRET", "zero-intercept-secret-key-2026")
+
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+from mongo import *
+
+# Alias for backward compatibility
+users_collection = users_col
+notifications_collection = notifications_col
 
 # ---------- MongoDB connection ----------
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-JWT_SECRET = os.getenv("JWT_SECRET", "zero-intercept-secret-2026")
-
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-db = None
-users_collection = None
-notifications_collection = None
-
-if client:
-    try:
-        # We'll skip server_info() at top level to avoid cold start timeouts
-        db = client["zero_intercept"]
-        users_collection = db["users"]
-        notifications_collection = db["notifications"]
-        # Create unique index on email
-        users_collection.create_index("email", unique=True)
-    except Exception as e:
-        print(f"[WARN] MongoDB connection setup failed: {e}")
-else:
-    print("[WARN] No MongoDB URI found in environment")
-
-
-# ---------- Request/Response models ----------
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -64,7 +49,6 @@ class UserResponse(BaseModel):
     role: str
     department: Optional[str] = None
     created_at: Optional[str] = None
-
 
 # ---------- Helper functions ----------
 def _hash_password(password: str) -> str:
@@ -97,7 +81,6 @@ def _get_current_user(authorization: str = Header(None)) -> dict:
         raise HTTPException(status_code=401, detail="Missing auth token")
     token = authorization.split(" ")[1]
     return _decode_token(token)
-
 
 # ---------- Auto-seed users from Staff CSV ----------
 def seed_users_from_staff():
@@ -200,7 +183,6 @@ def seed_users_from_staff():
         users_collection.insert_many(users_to_insert)
         print(f"  [OK] Seeded {len(users_to_insert)} users into MongoDB")
 
-
 # ---------- Endpoints ----------
 @router.post("/login")
 def login(request: LoginRequest):
@@ -225,7 +207,6 @@ def login(request: LoginRequest):
             "department": user.get("department", ""),
         }
     }
-
 
 @router.post("/register")
 def register(request: RegisterRequest, current_user: dict = Depends(_get_current_user)):
@@ -301,7 +282,6 @@ def register(request: RegisterRequest, current_user: dict = Depends(_get_current
         }
     }
 
-
 @router.get("/users")
 def list_users(current_user: dict = Depends(_get_current_user)):
     if users_collection is None:
@@ -336,7 +316,6 @@ def list_users(current_user: dict = Depends(_get_current_user)):
 
     return {"users": result, "total": len(result)}
 
-
 @router.get("/doctor-list")
 def list_doctors(department: Optional[str] = None):
     """List doctors, optionally filtered by department."""
@@ -359,7 +338,6 @@ def list_doctors(department: Optional[str] = None):
             for d in docs
         ]
     }
-
 
 @router.get("/notifications")
 def get_notifications(doctor_email: str, unread_only: bool = False):
@@ -390,18 +368,18 @@ def get_notifications(doctor_email: str, unread_only: bool = False):
         ]
     }
 
-
 @router.put("/notifications/{notif_id}/read")
 def mark_notification_read(notif_id: str):
     """Mark a notification as read."""
     if notifications_collection is None:
         raise HTTPException(status_code=503, detail="Database not available")
+    if not ObjectId.is_valid(notif_id):
+        raise HTTPException(status_code=400, detail="Invalid notification id")
     notifications_collection.update_one(
         {"_id": ObjectId(notif_id)},
         {"$set": {"read": True}}
     )
     return {"message": "Notification marked as read"}
-
 
 @router.delete("/users/{user_id}")
 def delete_user(user_id: str, current_user: dict = Depends(_get_current_user)):
@@ -417,11 +395,9 @@ def delete_user(user_id: str, current_user: dict = Depends(_get_current_user)):
 
     return {"message": "User deleted"}
 
-
 @router.get("/me")
 def get_me(current_user: dict = Depends(_get_current_user)):
     return current_user
-
 
 # Manual seed (comment out if not needed)
 # seed_users_from_staff()

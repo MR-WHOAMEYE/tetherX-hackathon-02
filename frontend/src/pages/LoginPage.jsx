@@ -65,11 +65,11 @@ export default function LoginPage({ onLogin }) {
                         transition={{ duration: 0.6 }}
                         className="flex items-center gap-3"
                     >
-                        <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center">
-                            <Stethoscope size={24} className="text-emerald-400" />
+                        <div className="w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center overflow-hidden">
+                            <img src="/MEDIX-Photoroom.png" alt="MEDIX Logo" className="w-full h-full object-contain p-2" />
                         </div>
                         <div>
-                            <h2 className="text-white text-lg font-bold tracking-tight">Zero Intercept</h2>
+                            <h2 className="text-white text-xl font-bold tracking-tight">MEDIX</h2>
                             <p className="text-emerald-400/70 text-xs font-medium">Hospital Intelligence Platform</p>
                         </div>
                     </motion.div>
@@ -120,10 +120,10 @@ export default function LoginPage({ onLogin }) {
             <div className="flex-1 flex items-center justify-center p-8 bg-slate-50 relative">
                 {/* Mobile logo */}
                 <div className="lg:hidden absolute top-8 left-8 flex items-center gap-2.5">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#0F766E] to-[#14B8A6] flex items-center justify-center">
-                        <Stethoscope size={20} className="text-white" />
+                    <div className="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center overflow-hidden border border-slate-100">
+                        <img src="/MEDIX-Photoroom.png" alt="MEDIX Logo" className="w-full h-full object-contain p-1.5" />
                     </div>
-                    <span className="text-lg font-bold text-slate-800">Zero Intercept</span>
+                    <span className="text-xl font-bold text-slate-800">MEDIX</span>
                 </div>
 
                 <motion.div
@@ -223,7 +223,7 @@ export default function LoginPage({ onLogin }) {
                     </div>
 
                     <p className="text-center text-xs text-slate-400 mt-8">
-                        © 2026 Zero Intercept · Hospital Intelligence Platform
+                        © 2026 MEDIX · Hospital Intelligence Platform
                     </p>
                 </motion.div>
             </div>

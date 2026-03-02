@@ -5,7 +5,6 @@ Uses MongoDB only — no SQLite mock data.
 """
 from fastapi import APIRouter
 from typing import Optional
-from pymongo import MongoClient
 import os
 from datetime import datetime
 from dotenv import load_dotenv
@@ -13,22 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/admin", tags=["Admin API"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-
-# Collections
-users_col = mdb["users"] if mdb is not None else None
-prescriptions_col = mdb["prescriptions"] if mdb is not None else None
-diagnoses_col = mdb["diagnoses"] if mdb is not None else None
-vitals_col = mdb["patient_vitals"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-profiles_col = mdb["patient_profiles"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-feedback_col = mdb["patient_feedback"] if mdb is not None else None
-
-
 @router.get("/dashboard")
 def admin_dashboard():
     """Aggregated dashboard from MongoDB."""
@@ -107,7 +93,6 @@ def admin_dashboard():
         "sla_compliance": sla_compliance,
     }
 
-
 @router.get("/recent-prescriptions")
 def recent_prescriptions(limit: int = 15):
     """Recent prescriptions from MongoDB."""
@@ -132,7 +117,6 @@ def recent_prescriptions(limit: int = 15):
         ]
     }
 
-
 @router.get("/recent-diagnoses")
 def recent_diagnoses(limit: int = 15):
     """Recent diagnoses from MongoDB."""
@@ -153,7 +137,6 @@ def recent_diagnoses(limit: int = 15):
             for r in results
         ]
     }
-
 
 @router.get("/recent-vitals")
 def recent_vitals(limit: int = 15):
@@ -177,7 +160,6 @@ def recent_vitals(limit: int = 15):
         ]
     }
 
-
 @router.get("/recent-bookings")
 def recent_bookings(limit: int = 15):
     """Recent appointment bookings from MongoDB."""
@@ -199,7 +181,6 @@ def recent_bookings(limit: int = 15):
             for r in results
         ]
     }
-
 
 @router.get("/department-stats")
 def department_stats():

@@ -3,7 +3,6 @@ Root Cause Analysis — contributing factors to case delays.
 Uses MongoDB only — no SQLite mock data.
 """
 from fastapi import APIRouter
-from pymongo import MongoClient
 from collections import defaultdict
 import numpy as np
 import os
@@ -13,14 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/root-cause", tags=["Root Cause Analysis"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-users_col = mdb["users"] if mdb is not None else None
-
-
 @router.get("/analysis")
 def root_cause_analysis():
     """Analyze contributing factors to booking/appointment delays using feature importance."""

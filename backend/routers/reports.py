@@ -1,56 +1,80 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pymongo import MongoClient
 import os
 import csv
 import io
 import datetime
+import time
 from dotenv import load_dotenv
+from pymongo.errors import AutoReconnect, ConnectionFailure
 
 load_dotenv()
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
+
+from mongo import *
+
+def _safe_count(collection, filter_dict=None, retries=3):
+    """Count documents with retry logic for connection issues."""
+    if collection is None:
+        return 0
+    for attempt in range(retries):
+        try:
+            return collection.count_documents(filter_dict or {})
+        except (AutoReconnect, ConnectionFailure) as e:
+            if attempt < retries - 1:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            print(f"[WARN] MongoDB count failed after {retries} retries: {e}")
+            return 0
+
+def _safe_find(collection, filter_dict=None, projection=None, limit=500, retries=3):
+    """Find documents with retry logic for connection issues."""
+    if collection is None:
+        return []
+    for attempt in range(retries):
+        try:
+            cursor = collection.find(filter_dict or {}, projection)
+            if limit:
+                cursor = cursor.limit(limit)
+            return list(cursor)
+        except (AutoReconnect, ConnectionFailure) as e:
+            if attempt < retries - 1:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            print(f"[WARN] MongoDB find failed after {retries} retries: {e}")
+            return []
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-
-users_col = mdb["users"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-prescriptions_col = mdb["prescriptions"] if mdb is not None else None
-diagnoses_col = mdb["diagnoses"] if mdb is not None else None
-wards_col = mdb["wards"] if mdb is not None else None
-
-
 @router.get("/generate")
 def generate_report():
     """Generate weekly report data using real MongoDB metrics matching the dashboard."""
-    # We retrieve exactly what dashboard.py retrieves so the PDF matches the live screen
-    
-    total_doctors = users_col.count_documents({"role": "doctor"}) if users_col is not None else 0
-    total_nurses = users_col.count_documents({"role": "nurse"}) if users_col is not None else 0
-    total_staff = total_doctors + total_nurses
+    try:
+        # We retrieve exactly what dashboard.py retrieves so the PDF matches the live screen
+        
+        total_doctors = _safe_count(users_col, {"role": "doctor"})
+        total_nurses = _safe_count(users_col, {"role": "nurse"})
+        total_staff = total_doctors + total_nurses
 
-    total_rx = prescriptions_col.count_documents({}) if prescriptions_col is not None else 0
-    active_rx = prescriptions_col.count_documents({"status": "active"}) if prescriptions_col is not None else 0
-    total_dx = diagnoses_col.count_documents({}) if diagnoses_col is not None else 0
+        total_rx = _safe_count(prescriptions_col)
+        active_rx = _safe_count(prescriptions_col, {"status": "active"})
+        total_dx = _safe_count(diagnoses_col)
 
-    total_bookings = bookings_col.count_documents({}) if bookings_col is not None else 0
-    pending_bk = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
-    approved_bk = bookings_col.count_documents({"status": {"$in": ["approve", "approved"]}}) if bookings_col is not None else 0
+        total_bookings = _safe_count(bookings_col)
+        pending_bk = _safe_count(bookings_col, {"status": "pending"})
+        approved_bk = _safe_count(bookings_col, {"status": {"$in": ["approve", "approved"]}})
 
-    total_admissions = admissions_col.count_documents({}) if admissions_col is not None else 0
-    admitted_count = admissions_col.count_documents({"status": "admitted"}) if admissions_col is not None else 0
-    discharged_count = admissions_col.count_documents({"status": "discharged"}) if admissions_col is not None else 0
+        total_admissions = _safe_count(admissions_col)
+        admitted_count = _safe_count(admissions_col, {"status": "admitted"})
+        discharged_count = _safe_count(admissions_col, {"status": "discharged"})
 
-    total_cases = total_bookings + total_rx + total_dx
-    active_cases = pending_bk + active_rx + admitted_count
-    resolved_cases = approved_bk + (total_rx - active_rx) + discharged_count
+        total_cases = total_bookings + total_rx + total_dx
+        active_cases = pending_bk + active_rx + admitted_count
+        resolved_cases = approved_bk + (total_rx - active_rx) + discharged_count
 
-    # SLA Compliance
-    sla_compliance = 100.0
-    if bookings_col is not None:
-        responded = list(bookings_col.find({"responded_at": {"$ne": None}, "sla_deadline": {"$ne": None}}))
+        # SLA Compliance
+        sla_compliance = 100.0
+        responded = _safe_find(bookings_col, {"responded_at": {"$ne": None}, "sla_deadline": {"$ne": None}}, 
+                              {"responded_at": 1, "sla_deadline": 1}, limit=500)
         if responded:
             met = 0
             for b in responded:
@@ -62,10 +86,10 @@ def generate_report():
                     met += 1
             sla_compliance = round(met / len(responded) * 100, 1)
 
-    # Resolution Time
-    avg_resolution = 0
-    if admissions_col is not None:
-        discharged = list(admissions_col.find({"status": "discharged"}))
+        # Resolution Time
+        avg_resolution = 0
+        discharged = _safe_find(admissions_col, {"status": "discharged"}, 
+                               {"admitted_at": 1, "discharged_at": 1}, limit=200)
         if discharged:
             durations = []
             for d in discharged:
@@ -77,75 +101,80 @@ def generate_report():
                 except Exception: pass
             if durations: avg_resolution = round(sum(durations) / len(durations), 2)
 
-    # Department Breakdown
-    dept_summary = {}
-    departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
-    for d in departments:
-        d_bk_tot = bookings_col.count_documents({"department": d}) if bookings_col is not None else 0
-        d_bk_res = bookings_col.count_documents({"department": d, "status": {"$in": ["approve", "approved"]}}) if bookings_col is not None else 0
-        d_bk_act = bookings_col.count_documents({"department": d, "status": "pending"}) if bookings_col is not None else 0
-        
-        d_adm_tot = admissions_col.count_documents({"department": d}) if admissions_col is not None else 0
-        d_adm_res = admissions_col.count_documents({"department": d, "status": "discharged"}) if admissions_col is not None else 0
-        d_adm_act = admissions_col.count_documents({"department": d, "status": "admitted"}) if admissions_col is not None else 0
-        
-        dept_summary[d] = {
-            "department": d,
-            "total": d_bk_tot + d_adm_tot,
-            "resolved": d_bk_res + d_adm_res,
-            "active": d_bk_act + d_adm_act
-        }
+        # Department Breakdown
+        dept_summary = {}
+        departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
+        for d in departments:
+            d_bk_tot = _safe_count(bookings_col, {"department": d})
+            d_bk_res = _safe_count(bookings_col, {"department": d, "status": {"$in": ["approve", "approved"]}})
+            d_bk_act = _safe_count(bookings_col, {"department": d, "status": "pending"})
+            
+            d_adm_tot = _safe_count(admissions_col, {"department": d})
+            d_adm_res = _safe_count(admissions_col, {"department": d, "status": "discharged"})
+            d_adm_act = _safe_count(admissions_col, {"department": d, "status": "admitted"})
+            
+            dept_summary[d] = {
+                "department": d,
+                "total": d_bk_tot + d_adm_tot,
+                "resolved": d_bk_res + d_adm_res,
+                "active": d_bk_act + d_adm_act
+            }
 
-    return {
-        "report_title": "Weekly Operational Intelligence Report",
-        "generated_at": datetime.datetime.utcnow().isoformat(),
-        "period": "Last 7 Days (Live DB Snapshot)",
-        "summary": {
-            "total_cases": total_cases,
-            "resolved_cases": resolved_cases,
-            "active_cases": active_cases,
-            "sla_compliance_pct": sla_compliance,
-            "avg_resolution_hrs": avg_resolution,
-            "total_staff": total_staff,
-            "avg_overtime_hrs": 0,  # Proxy or tracked elsewhere
-            "patient_satisfaction": 4.8,  # Proxy
+        return {
+            "report_title": "Weekly Operational Intelligence Report",
+            "generated_at": datetime.datetime.utcnow().isoformat(),
+            "period": "Last 7 Days (Live DB Snapshot)",
+            "summary": {
+                "total_cases": total_cases,
+                "resolved_cases": resolved_cases,
+                "active_cases": active_cases,
+                "sla_compliance_pct": sla_compliance,
+                "avg_resolution_hrs": avg_resolution,
+                "total_staff": total_staff,
+                "avg_overtime_hrs": 0,  # Proxy or tracked elsewhere
+                "patient_satisfaction": 4.8,  # Proxy
         },
         "department_breakdown": [dept_summary[d] for d in departments],
     }
-
+    except Exception as e:
+        print(f"[ERROR] Report generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 @router.get("/export/csv")
 def export_csv():
     """Export live ward admissions and appointment bookings as CSV."""
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID", "Type", "Department", "Patient", "Status", "Created At", "Resolved At"])
-    
-    # Export Bookings
-    if bookings_col is not None:
-        for b in bookings_col.find():
+    try:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["ID", "Type", "Department", "Patient", "Status", "Created At", "Resolved At"])
+        
+        # Export Bookings
+        bookings = _safe_find(bookings_col, {}, limit=1000)
+        for b in bookings:
             writer.writerow([
                 str(b["_id"]), "Appointment Booking", b.get("department", ""),
                 b.get("patient_name", ""), b.get("status", ""),
                 b.get("created_at", ""), b.get("responded_at", "")
             ])
-            
-    # Export Admissions
-    if admissions_col is not None:
-        for a in admissions_col.find():
+                
+        # Export Admissions
+        admissions = _safe_find(admissions_col, {}, limit=1000)
+        for a in admissions:
             writer.writerow([
                 str(a["_id"]), f"Ward Admission ({a.get('ward_type', '')})", a.get("department", ""),
                 a.get("patient_name", ""), a.get("status", ""),
                 a.get("admitted_at", ""), a.get("discharged_at", "")
             ])
 
-    output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=hospital_live_cases.csv"}
-    )
-
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=hospital_live_cases.csv"}
+        )
+    except Exception as e:
+        print(f"[ERROR] CSV export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"CSV export failed: {str(e)}")
 
 @router.get("/export/pdf")
 def export_pdf():

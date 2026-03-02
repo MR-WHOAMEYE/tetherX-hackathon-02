@@ -1,28 +1,42 @@
 """
 Workload analytics — serves real data from MongoDB collections.
 Returns the same shape the frontend already expects.
+Optimized with caching for faster loading.
 """
 from fastapi import APIRouter
-from pymongo import MongoClient
 from collections import defaultdict
 import os
+import time
+from datetime import datetime
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 router = APIRouter(prefix="/api/workload", tags=["Workload Analytics"])
 
+from mongo import *
+
+# Simple in-memory cache with TTL
+class TTLCache:
+    def __init__(self, ttl_seconds: int = 30):
+        self._cache: Dict[str, tuple[float, Any]] = {}
+        self._ttl = ttl_seconds
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+    
+    def set(self, key: str, value: Any):
+        self._cache[key] = (time.time(), value)
+
+# Cache workload data for 30 seconds
+_workload_cache = TTLCache(ttl_seconds=30)
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-
-users_col = mdb["users"] if mdb is not None else None
-prescriptions_col = mdb["prescriptions"] if mdb is not None else None
-diagnoses_col = mdb["diagnoses"] if mdb is not None else None
-vitals_col = mdb["patient_vitals"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-
-
 @router.get("/department")
 def department_workload():
     """
@@ -30,6 +44,10 @@ def department_workload():
     total_cases = prescriptions + diagnoses + bookings for the dept.
     active_cases = pending bookings for the dept.
     """
+    cached = _workload_cache.get("department")
+    if cached is not None:
+        return cached
+    
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     results = []
 
@@ -51,14 +69,18 @@ def department_workload():
             "active_cases": active,
         })
 
+    _workload_cache.set("department", results)
     return results
-
 
 @router.get("/staff")
 def staff_workload():
     """
     Staff workload from MongoDB — prescriptions per doctor.
     """
+    cached = _workload_cache.get("staff")
+    if cached is not None:
+        return cached
+    
     if prescriptions_col is None:
         return []
 
@@ -73,7 +95,7 @@ def staff_workload():
     ]
     results = list(prescriptions_col.aggregate(pipeline))
 
-    return [
+    staff_data = [
         {
             "staff_id": i + 1,
             "name": r["_id"] or "Unknown",
@@ -85,13 +107,18 @@ def staff_workload():
         }
         for i, r in enumerate(results)
     ]
-
+    _workload_cache.set("staff", staff_data)
+    return staff_data
 
 @router.get("/hourly-heatmap")
 def hourly_heatmap():
     """
     Activity heatmap from MongoDB bookings — by day-of-week and hour.
     """
+    cached = _workload_cache.get("hourly_heatmap")
+    if cached is not None:
+        return cached
+    
     heatmap = [[0] * 24 for _ in range(7)]
 
     if bookings_col is not None:
@@ -100,7 +127,6 @@ def hourly_heatmap():
             ts = b.get("created_at", "")
             if ts:
                 try:
-                    from datetime import datetime
                     dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
                     dow = dt.weekday()
                     hour = dt.hour
@@ -109,8 +135,9 @@ def hourly_heatmap():
                     pass
 
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    return {"days": days, "hours": list(range(24)), "data": heatmap}
-
+    result = {"days": days, "hours": list(range(24)), "data": heatmap}
+    _workload_cache.set("hourly_heatmap", result)
+    return result
 
 @router.get("/weekly-trend")
 def weekly_trend():
@@ -118,6 +145,10 @@ def weekly_trend():
     Weekly clinical activity trend from MongoDB.
     Counts prescriptions + diagnoses + bookings per week.
     """
+    cached = _workload_cache.get("weekly_trend")
+    if cached is not None:
+        return cached
+    
     weekly = defaultdict(int)
 
     # Count prescriptions per week
@@ -126,7 +157,6 @@ def weekly_trend():
             ts = doc.get("created_at", "")
             if ts:
                 try:
-                    from datetime import datetime
                     dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
                     week = dt.isocalendar()[1]
                     year = dt.year
@@ -140,7 +170,6 @@ def weekly_trend():
             ts = doc.get("created_at", "")
             if ts:
                 try:
-                    from datetime import datetime
                     dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
                     week = dt.isocalendar()[1]
                     year = dt.year
@@ -154,7 +183,6 @@ def weekly_trend():
             ts = doc.get("created_at", "")
             if ts:
                 try:
-                    from datetime import datetime
                     dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
                     week = dt.isocalendar()[1]
                     year = dt.year
@@ -166,9 +194,12 @@ def weekly_trend():
 
     # If no data yet, return a single point so the chart shows something
     if not sorted_weeks:
-        from datetime import datetime
         now = datetime.now()
         week = now.isocalendar()[1]
-        return [{"week": f"{now.year}-W{week:02d}", "cases": 0}]
+        result = [{"week": f"{now.year}-W{week:02d}", "cases": 0}]
+        _workload_cache.set("weekly_trend", result)
+        return result
 
-    return [{"week": w, "cases": cnt} for w, cnt in sorted_weeks]
+    result = [{"week": w, "cases": cnt} for w, cnt in sorted_weeks]
+    _workload_cache.set("weekly_trend", result)
+    return result

@@ -5,7 +5,6 @@ Uses MongoDB only — no SQLite mock data.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from pymongo import MongoClient
 from bson import ObjectId
 import os
 from datetime import datetime
@@ -14,21 +13,9 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/nurse", tags=["Nurse API"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-vitals_col = mdb["patient_vitals"] if mdb is not None else None
-prescriptions_col = mdb["prescriptions"] if mdb is not None else None
-nurse_profiles_col = mdb["nurse_profiles"] if mdb is not None else None
-shift_schedules_col = mdb["shift_schedules"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-wards_col = mdb["wards"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-users_col = mdb["users"] if mdb is not None else None
-
-
-# ── Models ──
 class VitalRecord(BaseModel):
     patient_email: str
     patient_name: str
@@ -49,7 +36,6 @@ class ShiftSchedule(BaseModel):
     date: str
     shift: str  # Morning, Evening, Night
     ward_id: str
-
 
 # ═══════════════════════════════════════════
 # NURSE DASHBOARD
@@ -186,7 +172,6 @@ def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str]
         "admitted_patients": admitted_patients,
     }
 
-
 # ═══════════════════════════════════════════
 # PATIENT VITALS
 # ═══════════════════════════════════════════
@@ -209,7 +194,6 @@ def record_vitals(body: VitalRecord):
     }
     result = vitals_col.insert_one(doc)
     return {"message": "Vitals recorded", "id": str(result.inserted_id)}
-
 
 @router.get("/vitals")
 def get_vitals(patient_email: Optional[str] = None, department: Optional[str] = None):
@@ -241,7 +225,6 @@ def get_vitals(patient_email: Optional[str] = None, department: Optional[str] = 
         ]
     }
 
-
 # ═══════════════════════════════════════════
 # NURSE PROFILE
 # ═══════════════════════════════════════════
@@ -261,7 +244,6 @@ def get_nurse_profile(nurse_email: str):
             "shift": profile.get("shift", ""),
         }
     }
-
 
 @router.post("/profile/{nurse_email}")
 def set_nurse_profile(nurse_email: str, body: NurseProfileUpdate):
@@ -283,7 +265,6 @@ def set_nurse_profile(nurse_email: str, body: NurseProfileUpdate):
         upsert=True
     )
     return {"message": f"Nurse profile updated for {nurse_email}"}
-
 
 # ═══════════════════════════════════════════
 # SHIFT SCHEDULES
@@ -314,7 +295,6 @@ def get_shifts(nurse_email: Optional[str] = None, date: Optional[str] = None):
         ]
     }
 
-
 @router.post("/shifts")
 def create_shift(body: ShiftSchedule):
     """Admin creates a shift schedule for a nurse."""
@@ -330,7 +310,6 @@ def create_shift(body: ShiftSchedule):
     })
     return {"message": f"Shift scheduled for {body.nurse_email} on {body.date}"}
 
-
 @router.put("/shifts/check-in/{shift_id}")
 def check_in(shift_id: str):
     """Nurse checks in for their shift."""
@@ -341,7 +320,6 @@ def check_in(shift_id: str):
         {"$set": {"check_in": datetime.utcnow().isoformat()}}
     )
     return {"message": "Checked in"}
-
 
 @router.put("/shifts/check-out/{shift_id}")
 def check_out(shift_id: str):

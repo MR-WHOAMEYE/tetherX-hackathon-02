@@ -1,24 +1,16 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
-from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 router = APIRouter(prefix="/api/strategic", tags=["Strategic Planning"])
 
+from mongo import *
+
 # MongoDB
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-
-users_col = mdb["users"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-wards_col = mdb["wards"] if mdb is not None else None
-
-
 class ScenarioParams(BaseModel):
     scenario: str = "custom"
     department: str = "all"
@@ -27,7 +19,6 @@ class ScenarioParams(BaseModel):
     emergency_weight_pct: float = 20.0
     shift_duration_hrs: float = 8.0
     redistribute: bool = False
-
 
 @router.post("/simulate")
 def simulate_scenario(params: ScenarioParams):
@@ -155,7 +146,6 @@ def simulate_scenario(params: ScenarioParams):
         "ai_recommendations": ai_recommendations,
     }
 
-
 def _generate_ai_recommendations(departments, overall_risk, sla_breach_prob):
     recs = []
     critical_depts = [d for d in departments if d["stress_level"] > 80]
@@ -207,7 +197,6 @@ def _generate_ai_recommendations(departments, overall_risk, sla_breach_prob):
     })
 
     return recs[:5]
-
 
 def _get_recommendations(stress, dept, staff, cases):
     recs = []

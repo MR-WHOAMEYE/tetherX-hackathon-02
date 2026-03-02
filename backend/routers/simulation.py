@@ -5,29 +5,21 @@ Uses MongoDB only — no SQLite mock data.
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
-from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 router = APIRouter(prefix="/api/simulation", tags=["Simulation Lab"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-users_col = mdb["users"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-
-
 class SimulationParams(BaseModel):
     department: str
     add_staff: int = 0
     extend_shift_hours: float = 0
     reallocate_cases: int = 0
     target_department: Optional[str] = None
-
 
 @router.post("/run")
 def run_simulation(params: SimulationParams):

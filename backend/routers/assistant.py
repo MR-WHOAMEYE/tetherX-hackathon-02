@@ -5,7 +5,6 @@ Uses MongoDB only — no SQLite mock data.
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
-from pymongo import MongoClient
 import os
 import json
 from dotenv import load_dotenv
@@ -15,30 +14,24 @@ load_dotenv()
 
 router = APIRouter(prefix="/api/assistant", tags=["AI Assistant"])
 
-# MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-users_col = mdb["users"] if mdb is not None else None
-bookings_col = mdb["appointment_bookings"] if mdb is not None else None
-prescriptions_col = mdb["prescriptions"] if mdb is not None else None
-feedback_col = mdb["patient_feedback"] if mdb is not None else None
+from mongo import *
 
-# ---------- Gemini setup ----------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-
+# ---------- Gemini Client Setup ----------
 gemini_client = None
-if GEMINI_API_KEY and GEMINI_API_KEY != "your-gemini-api-key-here":
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
     try:
         from google import genai
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        print("[OK] Gemini AI Assistant initialized successfully")
+        print("[INIT] Gemini AI client initialized")
+    except ImportError:
+        print("[WARN] google-genai not installed. Run: pip install google-genai")
     except Exception as e:
-        print(f"[WARN] Gemini init failed: {e}. Falling back to keyword-based assistant.")
+        print(f"[WARN] Gemini initialization failed: {e}")
+else:
+    print("[INFO] GEMINI_API_KEY not set - using keyword fallback for AI assistant")
 
-
-# ---------- Request models ----------
+# MongoDB
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -47,82 +40,100 @@ class QueryRequest(BaseModel):
     query: str
     history: Optional[list[ChatMessage]] = None
 
-
 # ---------- Build live DB context for Gemini ----------
 def _build_db_context() -> str:
-    # Admissions as cases
-    total_cases = admissions_col.count_documents({}) if admissions_col is not None else 0
-    active_cases = admissions_col.count_documents({
-        "status": {"$in": ["admitted", "pending"]}
-    }) if admissions_col is not None else 0
-    discharged = admissions_col.count_documents({"status": "discharged"}) if admissions_col is not None else 0
+    # Match dashboard calculation: cases = bookings + prescriptions + diagnoses
+    total_bookings = bookings_col.count_documents({}) if bookings_col is not None else 0
+    total_rx = prescriptions_col.count_documents({}) if prescriptions_col is not None else 0
+    total_dx = diagnoses_col.count_documents({}) if diagnoses_col is not None else 0
+    
+    pending_bk = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
+    active_rx = prescriptions_col.count_documents({"status": "active"}) if prescriptions_col is not None else 0
+    
+    # Admissions
+    admitted_count = admissions_col.count_documents({"status": "admitted"}) if admissions_col is not None else 0
+    discharged_count = admissions_col.count_documents({"status": "discharged"}) if admissions_col is not None else 0
+    
+    # Cases (matching dashboard)
+    total_cases = total_bookings + total_rx + total_dx
+    active_cases = pending_bk + active_rx + admitted_count
+    resolved_cases = bookings_col.count_documents({"status": {"$in": ["approve", "approved"]}}) if bookings_col is not None else 0
+    resolved_cases += (total_rx - active_rx) + discharged_count
 
     # Staff stats
     total_staff = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
     total_doctors = users_col.count_documents({"role": "doctor"}) if users_col is not None else 0
     total_nurses = users_col.count_documents({"role": "nurse"}) if users_col is not None else 0
+    total_patients = users_col.count_documents({"role": "patient"}) if users_col is not None else 0
 
     # Department breakdown
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     dept_summary = []
     for dept in departments:
-        dept_admissions = admissions_col.count_documents({"department": dept}) if admissions_col is not None else 0
-        dept_active = admissions_col.count_documents({
-            "department": dept, "status": {"$in": ["admitted", "pending"]}
-        }) if admissions_col is not None else 0
+        dept_bookings = bookings_col.count_documents({"department": dept}) if bookings_col is not None else 0
+        dept_pending = bookings_col.count_documents({"department": dept, "status": "pending"}) if bookings_col is not None else 0
+        dept_rx = prescriptions_col.count_documents({"doctor_department": dept}) if prescriptions_col is not None else 0
         dept_staff = users_col.count_documents({
             "department": dept, "role": {"$in": ["doctor", "nurse"]}
         }) if users_col is not None else 0
-        dept_bookings = bookings_col.count_documents({"department": dept}) if bookings_col is not None else 0
-        dept_summary.append(f"  - {dept}: {dept_admissions} total admissions, {dept_active} active, {dept_staff} staff, {dept_bookings} bookings")
+        dept_summary.append(f"  - {dept}: {dept_bookings} bookings ({dept_pending} pending), {dept_rx} prescriptions, {dept_staff} staff")
     dept_text = "\n".join(dept_summary)
 
     # Patient feedback
-    total_feedback = feedback_col.count_documents({}) if feedback_col is not None else 0
+    total_feedback = patient_feedback_col.count_documents({}) if patient_feedback_col is not None else 0
     avg_rating = 0
-    if feedback_col is not None and total_feedback > 0:
+    if patient_feedback_col is not None and total_feedback > 0:
         pipeline = [{"$group": {"_id": None, "avg": {"$avg": "$rating"}}}]
-        result = list(feedback_col.aggregate(pipeline))
+        result = list(patient_feedback_col.aggregate(pipeline))
         avg_rating = round(result[0]["avg"], 1) if result else 0
 
-    # Bookings
-    total_bookings = bookings_col.count_documents({}) if bookings_col is not None else 0
-    pending_bookings = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
+    # No-shows and cancellations
     no_shows = bookings_col.count_documents({"status": {"$in": ["cancel", "cancelled", "no_show"]}}) if bookings_col is not None else 0
-
-    # Prescriptions
-    total_rx = prescriptions_col.count_documents({}) if prescriptions_col is not None else 0
+    
+    # Ward capacity
+    ward_stats = {"capacity": 0, "occupied": 0}
+    if wards_col is not None:
+        pipeline = [{"$group": {"_id": None, "capacity": {"$sum": "$capacity"}, "occupied": {"$sum": "$current_patients"}}}]
+        result = list(wards_col.aggregate(pipeline))
+        if result:
+            ward_stats = {"capacity": result[0].get("capacity", 0), "occupied": result[0].get("occupied", 0)}
+    bed_occupancy = round(ward_stats["occupied"] / max(ward_stats["capacity"], 1) * 100, 1)
 
     context = f"""
 === HOSPITAL LIVE DATA (as of now) ===
 
-ADMISSIONS/CASES:
-- Total admissions: {total_cases}
-- Active (admitted/pending): {active_cases}
-- Discharged: {discharged}
+CASES (Total Clinical Activity):
+- Total cases: {total_cases} (Bookings: {total_bookings}, Prescriptions: {total_rx}, Diagnoses: {total_dx})
+- Active cases: {active_cases}
+- Resolved cases: {resolved_cases}
 
-STAFF:
+STAFF & PATIENTS:
 - Total staff: {total_staff} (Doctors: {total_doctors}, Nurses: {total_nurses})
+- Registered patients: {total_patients}
 
 DEPARTMENT BREAKDOWN:
 {dept_text}
 
 BOOKINGS:
 - Total bookings: {total_bookings}
-- Pending: {pending_bookings}
+- Pending: {pending_bk}
 - Cancelled/No-shows: {no_shows}
+- Revenue loss from no-shows: ₹{no_shows * 1500}
 
-PRESCRIPTIONS: {total_rx} total
+BED CAPACITY:
+- Total beds: {ward_stats["capacity"]}
+- Occupied: {ward_stats["occupied"]}
+- Occupancy rate: {bed_occupancy}%
 
 PATIENT SATISFACTION:
 - Average rating: {avg_rating}/5
+- Total feedback entries: {total_feedback}
 - Total feedback entries: {total_feedback}
 
 FINANCIAL ESTIMATES:
 - No-show revenue loss: ₹{no_shows * 1500}
 """
     return context
-
 
 SYSTEM_PROMPT = """You are MedBot, an AI-powered Hospital Intelligence Assistant for a hospital operations platform called "Zero Intercept".
 
@@ -139,7 +150,6 @@ Your role:
 Respond in a professional but approachable tone. Use markdown formatting for readability.
 """
 
-
 # ---------- Main endpoint ----------
 @router.post("/query")
 def ai_query(request: QueryRequest):
@@ -155,7 +165,6 @@ def ai_query(request: QueryRequest):
 
     # Fallback to keyword-based system
     return _keyword_fallback(query)
-
 
 def _gemini_query(query: str, history: list[ChatMessage] | None) -> dict:
     """Query Gemini with live database context and conversation history."""
@@ -192,7 +201,6 @@ def _gemini_query(query: str, history: list[ChatMessage] | None) -> dict:
         "data": None,
     }
 
-
 # ---------- Keyword fallback ----------
 def _keyword_fallback(query: str) -> dict:
     q = query.lower()
@@ -213,7 +221,6 @@ def _keyword_fallback(query: str) -> dict:
     else:
         return _general_summary()
 
-
 def _underperforming_departments():
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     rankings = []
@@ -231,7 +238,6 @@ def _underperforming_departments():
         "insight": "Consider redistributing workload or adding temporary staff to high-load departments.",
         "data": worst,
     }
-
 
 def _burnout_analysis():
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
@@ -252,7 +258,6 @@ def _burnout_analysis():
         "data": data,
     }
 
-
 def _delay_analysis():
     pending = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
@@ -268,7 +273,6 @@ def _delay_analysis():
         "data": dept_pending[:3],
     }
 
-
 def _staff_analysis():
     total = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
     doctors = users_col.count_documents({"role": "doctor"}) if users_col is not None else 0
@@ -279,13 +283,12 @@ def _staff_analysis():
         "data": {"total_staff": total, "doctors": doctors, "nurses": nurses},
     }
 
-
 def _patient_satisfaction():
-    total_feedback = feedback_col.count_documents({}) if feedback_col is not None else 0
+    total_feedback = patient_feedback_col.count_documents({}) if patient_feedback_col is not None else 0
     if total_feedback == 0:
         return {"response": "No patient feedback data available.", "insight": None, "data": None}
     pipeline = [{"$group": {"_id": None, "avg": {"$avg": "$rating"}}}]
-    result = list(feedback_col.aggregate(pipeline)) if feedback_col is not None else []
+    result = list(patient_feedback_col.aggregate(pipeline)) if patient_feedback_col is not None else []
     avg = round(result[0]["avg"], 2) if result else 0
     return {
         "response": f"Average patient satisfaction: **{avg}/5** from {total_feedback} responses.",
@@ -293,17 +296,24 @@ def _patient_satisfaction():
         "data": {"average_rating": avg, "total_responses": total_feedback},
     }
 
-
 def _workload_summary():
-    total = admissions_col.count_documents({}) if admissions_col is not None else 0
-    active = admissions_col.count_documents({"status": {"$in": ["admitted", "pending"]}}) if admissions_col is not None else 0
+    # Match dashboard: cases = bookings + prescriptions + diagnoses
+    total_bookings = bookings_col.count_documents({}) if bookings_col is not None else 0
+    total_rx = prescriptions_col.count_documents({}) if prescriptions_col is not None else 0
+    total_dx = diagnoses_col.count_documents({}) if diagnoses_col is not None else 0
+    total = total_bookings + total_rx + total_dx
+    
+    pending_bk = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
+    active_rx = prescriptions_col.count_documents({"status": "active"}) if prescriptions_col is not None else 0
+    admitted = admissions_col.count_documents({"status": "admitted"}) if admissions_col is not None else 0
+    active = pending_bk + active_rx + admitted
+    
     load_pct = round(active / max(total, 1) * 100, 1)
     return {
-        "response": f"Current workload: **{total} total admissions**, with **{active} active** ({load_pct}% load).",
-        "insight": "If active cases exceed 60% of total, consider activating surge protocols.",
+        "response": f"Current workload: **{total} total cases** (bookings: {total_bookings}, prescriptions: {total_rx}, diagnoses: {total_dx}), with **{active} active** ({load_pct}% load).",
+        "insight": "If active cases exceed 30% of total, consider activating surge protocols.",
         "data": {"total_cases": total, "active_cases": active, "load_percentage": load_pct},
     }
-
 
 def _financial_summary():
     no_shows = bookings_col.count_documents({"status": {"$in": ["cancel", "cancelled", "no_show"]}}) if bookings_col is not None else 0
@@ -313,13 +323,22 @@ def _financial_summary():
         "data": {"no_shows": no_shows, "no_show_loss": no_shows * 1500},
     }
 
-
 def _general_summary():
-    total = admissions_col.count_documents({}) if admissions_col is not None else 0
-    active = admissions_col.count_documents({"status": {"$in": ["admitted", "pending"]}}) if admissions_col is not None else 0
+    # Match dashboard: cases = bookings + prescriptions + diagnoses
+    total_bookings = bookings_col.count_documents({}) if bookings_col is not None else 0
+    total_rx = prescriptions_col.count_documents({}) if prescriptions_col is not None else 0
+    total_dx = diagnoses_col.count_documents({}) if diagnoses_col is not None else 0
+    total = total_bookings + total_rx + total_dx
+    
+    pending_bk = bookings_col.count_documents({"status": "pending"}) if bookings_col is not None else 0
+    active_rx = prescriptions_col.count_documents({"status": "active"}) if prescriptions_col is not None else 0
+    admitted = admissions_col.count_documents({"status": "admitted"}) if admissions_col is not None else 0
+    active = pending_bk + active_rx + admitted
+    
     staff = users_col.count_documents({"role": {"$in": ["doctor", "nurse"]}}) if users_col is not None else 0
+    no_shows = bookings_col.count_documents({"status": {"$in": ["cancel", "cancelled", "no_show"]}}) if bookings_col is not None else 0
     return {
-        "response": f"**Hospital Overview**: {total} total admissions, {active} active, {staff} staff members. Ask me about specific departments, burnout risks, delays, or financials for deeper insights!",
+        "response": f"**Hospital Overview**: {total} total cases, {active} active, {staff} staff members, {total_bookings} bookings. No-show revenue loss: ₹{no_shows * 1500}. Ask me about specific departments, burnout risks, delays, or financials for deeper insights!",
         "insight": "Try asking about specific topics like 'underperforming departments' or 'burnout risk' for detailed analysis.",
-        "data": {"total_cases": total, "active_cases": active, "total_staff": staff},
+        "data": {"total_cases": total, "active_cases": active, "total_staff": staff, "no_show_loss": no_shows * 1500},
     }

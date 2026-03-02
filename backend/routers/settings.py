@@ -5,6 +5,8 @@ import json, os, psutil, time
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+from mongo import *
+
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.json")
 
 DEFAULT_SETTINGS = {

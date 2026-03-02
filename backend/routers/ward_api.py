@@ -5,7 +5,6 @@ MongoDB collections: wards, ward_admissions
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from pymongo import MongoClient
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -13,15 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter(prefix="/api/ward", tags=["Ward Management"])
 
+from mongo import *
+
 # MongoDB
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("mongo_db") or ""
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000) if MONGO_URI else None
-mdb = client["zero_intercept"] if client is not None else None
-wards_col = mdb["wards"] if mdb is not None else None
-admissions_col = mdb["ward_admissions"] if mdb is not None else None
-
-
-# ── Models ──
 class WardCreate(BaseModel):
     ward_id: str
     type: str  # ICU, General, Private
@@ -35,7 +28,6 @@ class WardAdmission(BaseModel):
     department: str
     assigned_by_doctor: Optional[str] = ""
     notes: Optional[str] = ""
-
 
 # ═══════════════════════════════════════════
 # WARD CRUD
@@ -62,7 +54,6 @@ def list_wards(department: Optional[str] = None):
         ]
     }
 
-
 @router.post("/wards")
 def create_ward(ward: WardCreate):
     """Create a new ward (Admin only)."""
@@ -79,7 +70,6 @@ def create_ward(ward: WardCreate):
     })
     return {"message": f"Ward {ward.ward_id} created", "ward_id": ward.ward_id}
 
-
 @router.put("/wards/{ward_id}")
 def update_ward(ward_id: str, capacity: int = None):
     """Update ward capacity (Admin only)."""
@@ -93,7 +83,6 @@ def update_ward(ward_id: str, capacity: int = None):
     wards_col.update_one({"ward_id": ward_id}, {"$set": update})
     return {"message": f"Ward {ward_id} updated"}
 
-
 @router.delete("/wards/{ward_id}")
 def delete_ward(ward_id: str):
     """Delete a ward (Admin only)."""
@@ -101,7 +90,6 @@ def delete_ward(ward_id: str):
         raise HTTPException(status_code=500, detail="MongoDB not connected")
     wards_col.delete_one({"ward_id": ward_id})
     return {"message": f"Ward {ward_id} deleted"}
-
 
 # ═══════════════════════════════════════════
 # SMART WARD SUGGESTION
@@ -146,7 +134,6 @@ def suggest_ward(department: str, ward_type: str):
             "available": available,
         }
     }
-
 
 # ═══════════════════════════════════════════
 # PATIENT ADMISSIONS
@@ -198,7 +185,6 @@ def create_admission(admission: WardAdmission):
         "ward_id": best["ward_id"],
     }
 
-
 @router.put("/admit/{admission_id}")
 def admit_patient(admission_id: str, nurse_email: str = ""):
     """Nurse confirms patient admission. Updates ward occupancy."""
@@ -224,7 +210,6 @@ def admit_patient(admission_id: str, nurse_email: str = ""):
     )
     return {"message": f"Patient admitted to {admission['ward_id']}", "admitted_at": now}
 
-
 @router.put("/discharge/{admission_id}")
 def discharge_patient(admission_id: str):
     """Nurse discharges patient. Decrements ward occupancy."""
@@ -249,7 +234,6 @@ def discharge_patient(admission_id: str):
         {"$inc": {"current_patients": -1}}
     )
     return {"message": f"Patient discharged from {admission['ward_id']}", "discharged_at": now}
-
 
 @router.get("/admissions")
 def list_admissions(ward_id: Optional[str] = None, status: Optional[str] = None):
@@ -283,7 +267,6 @@ def list_admissions(ward_id: Optional[str] = None, status: Optional[str] = None)
         ]
     }
 
-
 # ═══════════════════════════════════════════
 # SEED INITIAL WARDS
 # ═══════════════════════════════════════════
@@ -311,7 +294,6 @@ def seed_wards():
     ]
     wards_col.insert_many(default_wards)
     print(f"  [OK] Seeded {len(default_wards)} wards")
-
 
 # Manual seed (comment out if not needed)
 # seed_wards()
