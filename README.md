@@ -6,7 +6,7 @@ An enterprise-grade, AI-powered hospital operations monitoring and strategic dec
 ![MEDIX Logo](./frontend/public/MEDIX-Photoroom.png)
 
 ## 🚀 Live Demo
-- **Frontend Vercel Deployment:** [https://medix-3xfsls30o-tharankeswarans-projects.vercel.app](https://medix-3xfsls30o-tharankeswarans-projects.vercel.app)
+- **Frontend Vercel Deployment:** [medix.app](https://medix-15sd.vercel.app/)
 - **Backend API Docs (Swagger):** `<your-vercel-backend-url>/docs`
 
 ---
