@@ -84,14 +84,15 @@ npm run dev
       </a>
       <br />Frontend Development
     </td>
-  <tr>
     <td align="center">
       <a href="https://github.com/Akshaykumar-B">
-        <img src="https://github.com/Akshaykumar-B.png" width="100px;" alt="Thanveer265"/>
+        <img src="https://github.com/Akshaykumar-B.png" width="100px;" alt="Akshaykumar-B"/>
         <br /><sub><b>Akshaykumar-B</b></sub>
       </a>
-      <br /> Supporter 
+      <br />Supporter
     </td>
+  </tr>
+  <tr>
     <td align="center">
       <a href="https://github.com/MR-WHOAMEYE">
         <img src="https://github.com/MR-WHOAMEYE.png" width="100px;" alt="MR-WHOAMEYE"/>
@@ -132,4 +133,4 @@ npm run dev
 ```
 
 ---
-*Built with zero intercept team  for improved healthcare operations and patient outcomes.*
+*Built with zero intercept team for improved healthcare operations and patient outcomes.*
