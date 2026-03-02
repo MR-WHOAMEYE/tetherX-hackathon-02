@@ -61,6 +61,53 @@ def health():
     return {"status": "healthy"}
 
 
+@app.on_event("startup")
+async def preload_caches():
+    """Preload caches for faster initial page loads."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    
+    print("[STARTUP] Preloading caches...")
+    
+    # Preload nurse dashboard for common departments
+    departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology", "ICU"]
+    
+    def preload_nurse_dashboard():
+        try:
+            for dept in departments:
+                nurse_api.nurse_dashboard(department=dept)
+            print(f"[STARTUP] Nurse dashboard cache warmed for {len(departments)} departments")
+        except Exception as e:
+            print(f"[STARTUP] Nurse cache preload error: {e}")
+    
+    def preload_ward_data():
+        try:
+            ward_api.list_wards()
+            print("[STARTUP] Ward data cache warmed")
+        except Exception as e:
+            print(f"[STARTUP] Ward cache preload error: {e}")
+    
+    def preload_admin_data():
+        try:
+            admin_api.admin_dashboard()
+            admin_api.recent_prescriptions()
+            admin_api.recent_diagnoses()
+            admin_api.recent_vitals()
+            admin_api.recent_bookings()
+            admin_api.department_stats()
+            print("[STARTUP] Admin dashboard cache warmed")
+        except Exception as e:
+            print(f"[STARTUP] Admin cache preload error: {e}")
+    
+    # Run preloads in thread pool to not block startup
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        executor.submit(preload_nurse_dashboard)
+        executor.submit(preload_ward_data)
+        executor.submit(preload_admin_data)
+    
+    print("[STARTUP] Cache preloading initiated")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

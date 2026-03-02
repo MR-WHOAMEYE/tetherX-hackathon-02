@@ -5,6 +5,8 @@ Uses MongoDB only — no SQLite mock data.
 from fastapi import APIRouter
 from collections import defaultdict
 import os
+import time
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,14 +14,41 @@ router = APIRouter(prefix="/api/sentiment", tags=["Sentiment Intelligence"])
 
 from mongo import *
 
+# Alias for the collection
+feedback_col = patient_feedback_col
+
+# Simple TTL cache
+class TTLCache:
+    def __init__(self, ttl_seconds: int = 60):
+        self._cache: Dict[str, tuple[float, Any]] = {}
+        self._ttl = ttl_seconds
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+    
+    def set(self, key: str, value: Any):
+        self._cache[key] = (time.time(), value)
+
+_sentiment_cache = TTLCache(ttl_seconds=60)
+
 # MongoDB
 @router.get("/analysis")
 def sentiment_analysis():
     """NLP-based sentiment analysis with department ranking."""
     if feedback_col is None:
         return {"departments": [], "overall": {"avg_score": 0, "total_feedback": 0, "sentiment_distribution": {"positive": 0, "neutral": 0, "negative": 0}}}
+    
+    # Check cache first
+    cached = _sentiment_cache.get("analysis")
+    if cached is not None:
+        return cached
 
-    feedbacks = list(feedback_col.find())
+    feedbacks = list(feedback_col.find().limit(500))
 
     dept_stats = defaultdict(lambda: {
         "total": 0, "positive": 0, "neutral": 0, "negative": 0,
@@ -71,4 +100,6 @@ def sentiment_analysis():
         }
     }
 
-    return {"departments": results, "overall": overall}
+    result = {"departments": results, "overall": overall}
+    _sentiment_cache.set("analysis", result)
+    return result

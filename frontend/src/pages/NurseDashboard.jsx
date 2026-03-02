@@ -245,8 +245,56 @@ export default function NurseDashboard() {
     };
 
     if (loading) return (
-        <div className="flex items-center justify-center h-96">
-            <div className="w-8 h-8 border-3 border-green-200 border-t-green-500 rounded-full animate-spin" />
+        <div className="min-h-screen text-text-primary pb-24">
+            {/* Skeleton Banner */}
+            <div className="rounded-2xl overflow-hidden mb-7 bg-gradient-to-br from-teal-900 to-teal-700 animate-pulse">
+                <div className="p-12">
+                    <div className="flex justify-between">
+                        <div className="space-y-3">
+                            <div className="h-4 w-48 bg-white/10 rounded" />
+                            <div className="h-10 w-64 bg-white/20 rounded" />
+                            <div className="h-6 w-40 bg-white/10 rounded" />
+                        </div>
+                        <div className="text-right space-y-2">
+                            <div className="h-4 w-32 bg-white/10 rounded ml-auto" />
+                            <div className="h-12 w-40 bg-white/20 rounded ml-auto" />
+                        </div>
+                    </div>
+                </div>
+                <div className="p-4 bg-black/20 flex gap-8">
+                    {[1,2,3,4,5,6].map(i => <div key={i} className="h-5 w-24 bg-white/10 rounded" />)}
+                </div>
+            </div>
+            {/* Skeleton Grid */}
+            <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-12 xl:col-span-6 space-y-4">
+                    {[1,2].map(i => (
+                        <div key={i} className="bg-white rounded-2xl border p-4 animate-pulse">
+                            <div className="h-4 w-40 bg-gray-200 rounded mb-4" />
+                            <div className="space-y-3">
+                                {[1,2,3].map(j => <div key={j} className="h-16 bg-gray-100 rounded-xl" />)}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <div className="col-span-12 xl:col-span-4 space-y-4">
+                    <div className="bg-white rounded-2xl border p-5 animate-pulse">
+                        <div className="h-4 w-32 bg-gray-200 rounded mb-4" />
+                        <div className="h-3 bg-gray-100 rounded-full mb-4" />
+                        <div className="h-20 bg-gray-50 rounded-xl" />
+                    </div>
+                    <div className="bg-white rounded-2xl border p-4 animate-pulse">
+                        <div className="h-4 w-36 bg-gray-200 rounded mb-3" />
+                        {[1,2,3].map(i => <div key={i} className="h-12 bg-gray-100 rounded-lg mb-2" />)}
+                    </div>
+                </div>
+                <div className="col-span-12 xl:col-span-2 space-y-4">
+                    <div className="bg-white rounded-2xl border p-4 animate-pulse">
+                        <div className="h-4 w-24 bg-gray-200 rounded mb-3" />
+                        {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded mb-2" />)}
+                    </div>
+                </div>
+            </div>
         </div>
     );
 
@@ -330,7 +378,8 @@ function PendingAdmissionsPanel({ admissions, onAdmit }) {
                                 <div>
                                     <p className="text-xs font-bold text-amber-800">{a.patient_name}</p>
                                     <p className="text-[10px] text-amber-600">
-                                        Assigned by {a.assigned_by_doctor} • {a.ward_type}
+                                        {a.ward_id && <span className="font-semibold mr-1">{a.ward_id} •</span>}
+                                        Assigned by {a.assigned_by_doctor || 'Doctor'} • {a.ward_type}
                                     </p>
                                 </div>
                             </div>
@@ -379,6 +428,7 @@ function AdmittedPatientsPanel({ patients, onDischarge }) {
                                 <div>
                                     <p className="text-xs font-bold text-emerald-800">{a.patient_name}</p>
                                     <p className="text-[10px] text-emerald-600">
+                                        {a.ward_id && <span className="mr-2 font-semibold">{a.ward_id}</span>}
                                         Admitted {a.admitted_at ? new Date(a.admitted_at).toLocaleString() : '—'}
                                     </p>
                                 </div>

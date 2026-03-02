@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 import os
+import time
 from datetime import datetime
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -8,16 +10,40 @@ router = APIRouter(prefix="/api/alerts", tags=["Risk & Alerts"])
 
 from mongo import *
 
+# Simple TTL cache
+class TTLCache:
+    def __init__(self, ttl_seconds: int = 30):
+        self._cache: Dict[str, tuple[float, Any]] = {}
+        self._ttl = ttl_seconds
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+    
+    def set(self, key: str, value: Any):
+        self._cache[key] = (time.time(), value)
+
+_alerts_cache = TTLCache(ttl_seconds=30)
+
 # MongoDB
 @router.get("/active")
 def active_alerts():
     """Generate real-time alerts based on live MongoDB data."""
+    # Check cache first
+    cached = _alerts_cache.get("active")
+    if cached is not None:
+        return cached
+    
     alerts = []
     now = datetime.utcnow()
 
     # 1. SLA Breach / Warning Alerts (from pending bookings)
     if bookings_col is not None:
-        pending_bookings = list(bookings_col.find({"status": "pending", "sla_deadline": {"$ne": None}}))
+        pending_bookings = list(bookings_col.find({"status": "pending", "sla_deadline": {"$ne": None}}).limit(100))
         for b in pending_bookings:
             try:
                 sla_dt = datetime.fromisoformat(b["sla_deadline"]) if isinstance(b["sla_deadline"], str) else b["sla_deadline"]
@@ -85,7 +111,7 @@ def active_alerts():
     severity_order = {"Critical": 0, "High": 1, "Warning": 2}
     alerts.sort(key=lambda x: severity_order.get(x["severity"], 3))
 
-    return {
+    result = {
         "alerts": alerts[:50],
         "summary": {
             "total": len(alerts),
@@ -94,3 +120,5 @@ def active_alerts():
             "warning": sum(1 for a in alerts if a["severity"] == "Warning"),
         }
     }
+    _alerts_cache.set("active", result)
+    return result

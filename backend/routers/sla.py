@@ -5,6 +5,9 @@ Uses MongoDB only — no SQLite mock data.
 from fastapi import APIRouter
 from collections import defaultdict
 import os
+import time
+from datetime import datetime
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,16 +15,39 @@ router = APIRouter(prefix="/api/sla", tags=["Resolution & SLA"])
 
 from mongo import *
 
+# Simple TTL cache
+class TTLCache:
+    def __init__(self, ttl_seconds: int = 60):
+        self._cache: Dict[str, tuple[float, Any]] = {}
+        self._ttl = ttl_seconds
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+    
+    def set(self, key: str, value: Any):
+        self._cache[key] = (time.time(), value)
+
+_sla_cache = TTLCache(ttl_seconds=60)
+
 # MongoDB
 @router.get("/resolution-trend")
 def resolution_trend():
     if bookings_col is None:
         return []
+    
+    cached = _sla_cache.get("resolution-trend")
+    if cached is not None:
+        return cached
 
     responded = list(bookings_col.find({
         "responded_at": {"$ne": None},
         "created_at": {"$ne": None},
-    }))
+    }).limit(500))
 
     daily = defaultdict(lambda: {"count": 0, "total_time": 0})
     for b in responded:
@@ -31,8 +57,6 @@ def resolution_trend():
             if not created or not responded_at:
                 continue
             day = responded_at[:10]  # YYYY-MM-DD
-            # Approximate hours between creation and response
-            from datetime import datetime
             c_time = datetime.fromisoformat(created)
             r_time = datetime.fromisoformat(responded_at)
             hours = (r_time - c_time).total_seconds() / 3600
@@ -41,7 +65,7 @@ def resolution_trend():
         except (ValueError, TypeError):
             continue
 
-    return [
+    result = [
         {
             "date": day,
             "resolved_count": d["count"],
@@ -49,38 +73,49 @@ def resolution_trend():
         }
         for day, d in sorted(daily.items())
     ]
+    _sla_cache.set("resolution-trend", result)
+    return result
 
 @router.get("/delayed-percentage")
 def delayed_percentage():
     if bookings_col is None:
         return {"delayed_pct": 0, "on_time_pct": 100}
+    
+    cached = _sla_cache.get("delayed-percentage")
+    if cached is not None:
+        return cached
 
     responded = list(bookings_col.find({
         "responded_at": {"$ne": None},
         "sla_deadline": {"$ne": None},
-    }))
+    }).limit(500))
 
     if not responded:
         return {"delayed_pct": 0, "on_time_pct": 100}
 
     delayed = sum(1 for b in responded if b.get("responded_at", "") > b.get("sla_deadline", ""))
     pct = round(delayed / len(responded) * 100, 1)
-    return {
+    result = {
         "delayed_pct": pct,
         "on_time_pct": round(100 - pct, 1),
         "total_resolved": len(responded),
         "delayed_count": delayed,
     }
+    _sla_cache.set("delayed-percentage", result)
+    return result
 
 @router.get("/violation-risk")
 def violation_risk():
     """Predict SLA violation risk for pending bookings."""
     if bookings_col is None:
         return []
+    
+    cached = _sla_cache.get("violation-risk")
+    if cached is not None:
+        return cached
 
-    from datetime import datetime
     now = datetime.utcnow()
-    pending = list(bookings_col.find({"status": "pending", "sla_deadline": {"$ne": None}}))
+    pending = list(bookings_col.find({"status": "pending", "sla_deadline": {"$ne": None}}).limit(100))
 
     risk_data = []
     for b in pending:
@@ -108,19 +143,24 @@ def violation_risk():
             continue
 
     risk_data.sort(key=lambda x: x["risk_pct"], reverse=True)
-    return risk_data[:50]
+    result = risk_data[:50]
+    _sla_cache.set("violation-risk", result)
+    return result
 
 @router.get("/department-efficiency")
 def department_efficiency():
     if bookings_col is None:
         return []
+    
+    cached = _sla_cache.get("department-efficiency")
+    if cached is not None:
+        return cached
 
-    from datetime import datetime
     responded = list(bookings_col.find({
         "responded_at": {"$ne": None},
         "created_at": {"$ne": None},
         "sla_deadline": {"$ne": None},
-    }))
+    }).limit(500))
 
     dept_stats = defaultdict(lambda: {"count": 0, "total_time": 0, "sla_met": 0})
     for b in responded:
@@ -149,4 +189,5 @@ def department_efficiency():
             "cases_resolved": stats["count"],
         })
     results.sort(key=lambda x: x["efficiency_score"], reverse=True)
+    _sla_cache.set("department-efficiency", results)
     return results

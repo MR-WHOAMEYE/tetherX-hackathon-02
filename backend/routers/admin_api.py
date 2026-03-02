@@ -6,6 +6,7 @@ Uses MongoDB only — no SQLite mock data.
 from fastapi import APIRouter
 from typing import Optional
 import os
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -14,10 +15,36 @@ router = APIRouter(prefix="/api/admin", tags=["Admin API"])
 
 from mongo import *
 
+# ═══════════════════════════════════════════
+# TTL CACHE FOR PERFORMANCE
+# ═══════════════════════════════════════════
+class TTLCache:
+    def __init__(self, ttl_seconds=30):
+        self._cache = {}
+        self._ttl = ttl_seconds
+
+    def get(self, key):
+        if key in self._cache:
+            value, ts = self._cache[key]
+            if time.time() - ts < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+
+    def set(self, key, value):
+        self._cache[key] = (value, time.time())
+
+_admin_cache = TTLCache(ttl_seconds=30)
+
 # MongoDB
 @router.get("/dashboard")
 def admin_dashboard():
     """Aggregated dashboard from MongoDB."""
+    
+    # Check cache first
+    cached = _admin_cache.get("dashboard")
+    if cached:
+        return cached
 
     # ── User stats ──
     total_users = users_col.count_documents({}) if users_col is not None else 0
@@ -59,12 +86,12 @@ def admin_dashboard():
     # ── SLA compliance from bookings ──
     sla_compliance = 0
     if bookings_col is not None:
-        responded = list(bookings_col.find({"responded_at": {"$ne": None}, "sla_deadline": {"$ne": None}}))
+        responded = list(bookings_col.find({"responded_at": {"$ne": None}, "sla_deadline": {"$ne": None}}).limit(500))
         if responded:
             sla_met = sum(1 for b in responded if b.get("responded_at", "") <= b.get("sla_deadline", ""))
             sla_compliance = round(sla_met / len(responded) * 100, 1)
 
-    return {
+    result = {
         # User accounts
         "total_users": total_users,
         "doctors": doctors,
@@ -92,14 +119,21 @@ def admin_dashboard():
         "avg_rating": avg_rating,
         "sla_compliance": sla_compliance,
     }
+    _admin_cache.set("dashboard", result)
+    return result
 
 @router.get("/recent-prescriptions")
 def recent_prescriptions(limit: int = 15):
     """Recent prescriptions from MongoDB."""
+    # Check cache
+    cached = _admin_cache.get(f"prescriptions_{limit}")
+    if cached:
+        return cached
+        
     if prescriptions_col is None:
         return {"prescriptions": []}
     results = prescriptions_col.find().sort("created_at", -1).limit(limit)
-    return {
+    data = {
         "prescriptions": [
             {
                 "id": str(r["_id"]),
@@ -116,14 +150,20 @@ def recent_prescriptions(limit: int = 15):
             for r in results
         ]
     }
+    _admin_cache.set(f"prescriptions_{limit}", data)
+    return data
 
 @router.get("/recent-diagnoses")
 def recent_diagnoses(limit: int = 15):
     """Recent diagnoses from MongoDB."""
+    cached = _admin_cache.get(f"diagnoses_{limit}")
+    if cached:
+        return cached
+        
     if diagnoses_col is None:
         return {"diagnoses": []}
     results = diagnoses_col.find().sort("created_at", -1).limit(limit)
-    return {
+    data = {
         "diagnoses": [
             {
                 "id": str(r["_id"]),
@@ -137,14 +177,20 @@ def recent_diagnoses(limit: int = 15):
             for r in results
         ]
     }
+    _admin_cache.set(f"diagnoses_{limit}", data)
+    return data
 
 @router.get("/recent-vitals")
 def recent_vitals(limit: int = 15):
     """Recent vitals from MongoDB."""
+    cached = _admin_cache.get(f"vitals_{limit}")
+    if cached:
+        return cached
+        
     if vitals_col is None:
         return {"vitals": []}
     results = vitals_col.find().sort("recorded_at", -1).limit(limit)
-    return {
+    data = {
         "vitals": [
             {
                 "id": str(r["_id"]),
@@ -159,14 +205,20 @@ def recent_vitals(limit: int = 15):
             for r in results
         ]
     }
+    _admin_cache.set(f"vitals_{limit}", data)
+    return data
 
 @router.get("/recent-bookings")
 def recent_bookings(limit: int = 15):
     """Recent appointment bookings from MongoDB."""
+    cached = _admin_cache.get(f"bookings_{limit}")
+    if cached:
+        return cached
+        
     if bookings_col is None:
         return {"bookings": []}
     results = bookings_col.find().sort("created_at", -1).limit(limit)
-    return {
+    data = {
         "bookings": [
             {
                 "id": str(r["_id"]),
@@ -181,10 +233,16 @@ def recent_bookings(limit: int = 15):
             for r in results
         ]
     }
+    _admin_cache.set(f"bookings_{limit}", data)
+    return data
 
 @router.get("/department-stats")
 def department_stats():
     """Per-department stats from MongoDB."""
+    cached = _admin_cache.get("department_stats")
+    if cached:
+        return cached
+        
     departments = ["Emergency", "Cardiology", "Orthopedics", "Pediatrics", "Neurology"]
     results = []
 
@@ -217,4 +275,6 @@ def department_stats():
             "users": users,
         })
 
-    return {"departments": results}
+    data = {"departments": results}
+    _admin_cache.set("department_stats", data)
+    return data

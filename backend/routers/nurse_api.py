@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 from bson import ObjectId
 import os
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -14,6 +15,27 @@ load_dotenv()
 router = APIRouter(prefix="/api/nurse", tags=["Nurse API"])
 
 from mongo import *
+
+# ═══════════════════════════════════════════
+# TTL CACHE FOR PERFORMANCE
+# ═══════════════════════════════════════════
+class TTLCache:
+    def __init__(self, ttl_seconds=30):
+        self._cache = {}
+        self._ttl = ttl_seconds
+
+    def get(self, key):
+        if key in self._cache:
+            value, ts = self._cache[key]
+            if time.time() - ts < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+
+    def set(self, key, value):
+        self._cache[key] = (value, time.time())
+
+_nurse_cache = TTLCache(ttl_seconds=30)
 
 # MongoDB
 class VitalRecord(BaseModel):
@@ -42,6 +64,12 @@ class ShiftSchedule(BaseModel):
 # ═══════════════════════════════════════════
 @router.get("/dashboard")
 def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str] = None):
+    # Check cache first
+    cache_key = f"dashboard_{department}_{nurse_email}"
+    cached = _nurse_cache.get(cache_key)
+    if cached:
+        return cached
+
     # Get nurse profile if available
     profile = None
     if nurse_profiles_col is not None and nurse_email:
@@ -51,10 +79,23 @@ def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str]
     assigned_shift = profile.get("shift", "") if profile else ""
     assigned_dept = profile.get("department", department or "") if profile else (department or "")
 
-    # Ward occupancy
+    # Ward occupancy - show specific ward or aggregate department wards
     ward_info = None
-    if wards_col is not None and assigned_ward:
-        ward_info = wards_col.find_one({"ward_id": assigned_ward})
+    if wards_col is not None:
+        if assigned_ward:
+            ward_info = wards_col.find_one({"ward_id": assigned_ward})
+        elif assigned_dept:
+            # Aggregate all wards in department
+            dept_wards = list(wards_col.find({"department": assigned_dept}))
+            if dept_wards:
+                total_capacity = sum(w.get("capacity", 0) for w in dept_wards)
+                total_patients = sum(w.get("current_patients", 0) for w in dept_wards)
+                ward_info = {
+                    "ward_id": f"{assigned_dept} (All Wards)",
+                    "type": "Mixed",
+                    "capacity": total_capacity,
+                    "current_patients": total_patients,
+                }
 
     # Patient counts from admissions (MongoDB)
     total_patients = 0
@@ -123,36 +164,48 @@ def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str]
             for m in meds
         ]
 
-    # Pending admissions for this nurse's ward
+    # Pending admissions - show ward-level or department-level
     pending_admissions = []
-    if admissions_col is not None and assigned_ward:
-        pending = admissions_col.find({"ward_id": assigned_ward, "status": "pending"}).sort("created_at", -1)
+    if admissions_col is not None:
+        pending_query = {"status": "pending"}
+        if assigned_ward:
+            pending_query["ward_id"] = assigned_ward
+        elif assigned_dept:
+            pending_query["department"] = assigned_dept
+        pending = admissions_col.find(pending_query).sort("created_at", -1).limit(20)
         pending_admissions = [
             {
                 "id": str(a["_id"]),
                 "patient_name": a.get("patient_name", ""),
                 "assigned_by_doctor": a.get("assigned_by_doctor", ""),
                 "ward_type": a.get("ward_type", ""),
+                "ward_id": a.get("ward_id", ""),
                 "created_at": a.get("created_at", ""),
             }
             for a in pending
         ]
 
-    # Admitted patients in this ward
+    # Admitted patients - show ward-level or department-level
     admitted_patients = []
-    if admissions_col is not None and assigned_ward:
-        admitted = admissions_col.find({"ward_id": assigned_ward, "status": "admitted"}).sort("admitted_at", -1)
+    if admissions_col is not None:
+        admitted_query = {"status": "admitted"}
+        if assigned_ward:
+            admitted_query["ward_id"] = assigned_ward
+        elif assigned_dept:
+            admitted_query["department"] = assigned_dept
+        admitted = admissions_col.find(admitted_query).sort("admitted_at", -1).limit(20)
         admitted_patients = [
             {
                 "id": str(a["_id"]),
                 "patient_name": a.get("patient_name", ""),
                 "admitted_at": a.get("admitted_at", ""),
+                "ward_id": a.get("ward_id", ""),
                 "notes": a.get("notes", ""),
             }
             for a in admitted
         ]
 
-    return {
+    result = {
         "ward": assigned_dept or "All",
         "assigned_ward": assigned_ward,
         "assigned_shift": assigned_shift,
@@ -171,6 +224,8 @@ def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str]
         "pending_admissions": pending_admissions,
         "admitted_patients": admitted_patients,
     }
+    _nurse_cache.set(cache_key, result)
+    return result
 
 # ═══════════════════════════════════════════
 # PATIENT VITALS

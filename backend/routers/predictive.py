@@ -6,6 +6,8 @@ from fastapi import APIRouter
 from collections import defaultdict
 import numpy as np
 import os
+import time
+from typing import Any, Dict, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -14,14 +16,38 @@ router = APIRouter(prefix="/api/predictive", tags=["Predictive Analytics"])
 
 from mongo import *
 
+# Simple TTL cache
+class TTLCache:
+    def __init__(self, ttl_seconds: int = 60):
+        self._cache: Dict[str, tuple[float, Any]] = {}
+        self._ttl = ttl_seconds
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+    
+    def set(self, key: str, value: Any):
+        self._cache[key] = (time.time(), value)
+
+_predictive_cache = TTLCache(ttl_seconds=60)
+
 # MongoDB
 @router.get("/forecast")
 def workload_forecast():
     """ARIMA-style workload forecast for next 7 days using moving average + trend."""
     if bookings_col is None:
         return {"error": "Database not available"}
+    
+    # Check cache first
+    cached = _predictive_cache.get("forecast")
+    if cached is not None:
+        return cached
 
-    all_bookings = list(bookings_col.find({"created_at": {"$ne": None}}))
+    all_bookings = list(bookings_col.find({"created_at": {"$ne": None}}).limit(1000))
     daily = defaultdict(int)
     for b in all_bookings:
         try:
@@ -60,33 +86,53 @@ def workload_forecast():
         })
 
     historical = [{"date": d, "cases": v} for d, v in sorted_days[-14:]]
-    return {"historical": historical, "forecast": forecast}
+    result = {"historical": historical, "forecast": forecast}
+    _predictive_cache.set("forecast", result)
+    return result
 
 @router.get("/burnout")
 def burnout_prediction():
     """Burnout risk prediction based on workload indicators from MongoDB."""
     if users_col is None:
         return []
+    
+    # Check cache first
+    cached = _predictive_cache.get("burnout")
+    if cached is not None:
+        return cached
 
-    staff = list(users_col.find({"role": {"$in": ["doctor", "nurse"]}}))
+    staff = list(users_col.find({"role": {"$in": ["doctor", "nurse"]}}).limit(100))
+    
+    # Pre-fetch all department stats in one query
+    dept_admissions_map = {}
+    dept_staff_map = {}
+    
+    if admissions_col is not None:
+        pipeline = [
+            {"$match": {"status": {"$in": ["admitted", "pending"]}}},
+            {"$group": {"_id": "$department", "count": {"$sum": 1}}}
+        ]
+        for r in admissions_col.aggregate(pipeline):
+            dept_admissions_map[r["_id"]] = r["count"]
+    
+    # Count staff per department
+    staff_pipeline = [
+        {"$match": {"role": {"$in": ["doctor", "nurse"]}}},
+        {"$group": {"_id": "$department", "count": {"$sum": 1}}}
+    ]
+    for r in users_col.aggregate(staff_pipeline):
+        dept_staff_map[r["_id"]] = r["count"]
+    
     results = []
 
     for s in staff:
-        # Estimate workload from bookings/admissions
-        email = s.get("email", "")
         dept = s.get("department", "")
 
-        # Count active admissions in their department
-        dept_admissions = admissions_col.count_documents({
-            "department": dept, "status": {"$in": ["admitted", "pending"]}
-        }) if admissions_col is not None else 0
+        # Use pre-fetched data
+        dept_admissions = dept_admissions_map.get(dept, 0)
+        dept_staff_count = dept_staff_map.get(dept, 1)
 
-        # Count total staff in their department for ratio
-        dept_staff = users_col.count_documents({
-            "department": dept, "role": {"$in": ["doctor", "nurse"]}
-        }) if users_col is not None else 1
-
-        cases_per_staff = dept_admissions / max(dept_staff, 1)
+        cases_per_staff = dept_admissions / max(dept_staff_count, 1)
         caseload_factor = cases_per_staff / 5.0
 
         # Estimate shift intensity and overtime based on load
@@ -111,6 +157,7 @@ def burnout_prediction():
             "role": s.get("role", ""),
         })
     results.sort(key=lambda x: x["risk_probability"], reverse=True)
+    _predictive_cache.set("burnout", results)
     return results
 
 @router.get("/surge")
@@ -118,8 +165,13 @@ def surge_detection():
     """Anomaly detection for booking volume surges using z-score method."""
     if bookings_col is None:
         return {"alerts": [], "stats": {}}
+    
+    # Check cache first
+    cached = _predictive_cache.get("surge")
+    if cached is not None:
+        return cached
 
-    all_bookings = list(bookings_col.find({"created_at": {"$ne": None}}))
+    all_bookings = list(bookings_col.find({"created_at": {"$ne": None}}).limit(1000))
     daily = defaultdict(int)
     for b in all_bookings:
         try:
@@ -158,4 +210,6 @@ def surge_detection():
         "total_surge_days": len(alerts),
     }
     alerts.sort(key=lambda x: x["z_score"], reverse=True)
-    return {"alerts": alerts[:20], "stats": stats}
+    result = {"alerts": alerts[:20], "stats": stats}
+    _predictive_cache.set("surge", result)
+    return result
