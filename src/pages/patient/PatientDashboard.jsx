@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
     FileText, Download, MessageSquare, Brain, Send, Bell,
     ChevronDown, ChevronUp, CheckCircle, Clock, Pill,
@@ -7,6 +8,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
 import { generateReportPDF } from '../../services/pdfService';
+import HeroBanner from '../../components/HeroBanner';
 
 // ─── AI suggestion generator ─────────────────────────────────────
 const generateAISuggestion = (question) => {
@@ -329,7 +331,17 @@ export default function PatientDashboard() {
         getPatientVitals, getPatientQuestions, getUser,
         submitQuestion, getUserNotifications, markNotificationRead
     } = useApp();
-    const [activeTab, setActiveTab] = useState('reports');
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'reports');
+
+    useEffect(() => {
+        const tab = searchParams.get('tab');
+        if (tab) {
+            setActiveTab(tab);
+        } else {
+            setActiveTab('reports');
+        }
+    }, [searchParams]);
 
     const patient = getPatientByUserId(user?.id);
     const patientReports = patient ? getPatientReports(patient.id) : [];
@@ -363,17 +375,32 @@ export default function PatientDashboard() {
 
     return (
         <div className="page-container">
-            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                    <h1 className="page-title">Welcome, {patient.name}</h1>
-                    <p className="page-subtitle">{patient.id} · {patient.age}y · {patient.gender} · {patient.bloodGroup}</p>
-                </div>
-                <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
-                    {patient.conditions.map(c => (
-                        <span key={c} className="badge badge-accent" style={{ fontSize: '0.6875rem' }}>{c}</span>
-                    ))}
-                </div>
-            </div>
+            <HeroBanner
+                role="patient"
+                title={`Welcome, ${patient.name}`}
+                subtitle={`${patient.id} · ${patient.age} yrs · ${patient.gender} · Blood Group: ${patient.bloodGroup}`}
+            >
+                {patient.conditions.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, color: '#5eead4' }}>Known Conditions:</div>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {patient.conditions.map(c => (
+                                <span key={c} style={{
+                                    background: 'rgba(94, 234, 212, 0.1)',
+                                    padding: '0.25rem 0.75rem',
+                                    borderRadius: 'var(--radius-full)',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 700,
+                                    color: '#5eead4',
+                                    border: '1px solid rgba(94, 234, 212, 0.2)'
+                                }}>
+                                    {c}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </HeroBanner>
 
             {/* Quick Stats */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>

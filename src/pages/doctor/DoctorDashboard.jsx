@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
     Users, FileText, Pill, Bell, ClipboardList, Plus,
     ChevronDown, ChevronUp, Activity, Send, X, Save,
@@ -7,6 +8,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
 import { generateReportPDF } from '../../services/pdfService';
+import HeroBanner from '../../components/HeroBanner';
 
 // ═══ SUB-TAB: My Patients ═══════════════════════════════════════
 function MyPatients({ patients, getPatientVitals, getPatientPrescriptions }) {
@@ -436,7 +438,17 @@ function DoctorNotifications({ questions, getPatient, answerQuestion, sendAISugg
 export default function DoctorDashboard() {
     const { user } = useAuth();
     const { patients, prescriptions, reports, questions, addPrescription, generateReport: genReport, getPatientVitals, getPatientPrescriptions, getPatientReports, getPatient, getUser, answerQuestion, sendAISuggestion, getUserNotifications, markNotificationRead } = useApp();
-    const [activeTab, setActiveTab] = useState('patients');
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'patients');
+
+    useEffect(() => {
+        const tab = searchParams.get('tab');
+        if (tab) {
+            setActiveTab(tab);
+        } else {
+            setActiveTab('patients'); // Default tab when no query arg
+        }
+    }, [searchParams]);
 
     const tabs = [
         { id: 'patients', label: 'My Patients', icon: Users },
@@ -449,12 +461,11 @@ export default function DoctorDashboard() {
 
     return (
         <div className="page-container">
-            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                    <h1 className="page-title">Doctor Dashboard</h1>
-                    <p className="page-subtitle">Welcome back, {user?.name}. {user?.specialization && `${user.specialization} · `}{patients.length} patients under care.</p>
-                </div>
-            </div>
+            <HeroBanner
+                role="doctor"
+                title="Doctor Dashboard"
+                subtitle={`Welcome back, ${user?.name}. ${user?.specialization && `${user.specialization} · `}${patients.length} patients currently under your care.`}
+            />
 
             {/* Quick Stats */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>

@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
     Users, UserPlus, Activity, Bell, Search, CheckCircle,
     ChevronDown, ChevronUp, Mail, Phone, ShieldCheck, AlertCircle,
@@ -6,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
+import HeroBanner from '../../components/HeroBanner';
 
 // ═══ SUB-TAB: Patient List ══════════════════════════════════════
 function PatientList({ patients, getPatientVitals }) {
@@ -360,7 +362,17 @@ function RecordVitals({ patients, recordVitals, nurseId }) {
 export default function NurseDashboard() {
     const { user } = useAuth();
     const { patients, questions, registerPatient, verifyPatient, recordVitals, getPatientVitals, getUserNotifications, answerQuestion, sendAISuggestion, getPatient } = useApp();
-    const [activeTab, setActiveTab] = useState('patients');
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'patients');
+
+    useEffect(() => {
+        const tab = searchParams.get('tab');
+        if (tab) {
+            setActiveTab(tab);
+        } else {
+            setActiveTab('patients');
+        }
+    }, [searchParams]);
 
     const pendingCount = questions.filter(q => q.status === 'pending').length;
 
@@ -373,10 +385,11 @@ export default function NurseDashboard() {
 
     return (
         <div className="page-container">
-            <div className="page-header">
-                <h1 className="page-title">Nurse Dashboard</h1>
-                <p className="page-subtitle">Welcome, {user?.name}. {user?.department || 'General'} Department · {patients.length} patients</p>
-            </div>
+            <HeroBanner
+                role="nurse"
+                title="Nurse Dashboard"
+                subtitle={`Welcome, ${user?.name}. You are assigned to the ${user?.department || 'General'} Department with ${patients.length} active patients.`}
+            />
 
             {/* Stats */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
