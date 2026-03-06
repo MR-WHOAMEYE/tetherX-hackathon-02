@@ -1,13 +1,11 @@
-# 🏥 MEDIX 
+# 🏥 TetherX  
 **AI-Driven Hospital Operational Intelligence & Strategic Decision Platform**
 
 An enterprise-grade, AI-powered hospital operations monitoring and strategic decision-support system. It features a powerful **FastAPI** backend integrated with **MongoDB Atlas**, and a stunning **React/Vite** frontend with a **3D Digital Twin** of the hospital.
 
 ![MEDIX Logo](./frontend/public/MEDIX-Photoroom.png)
 
-## 🚀 Live Demo
-- **Frontend Vercel Deployment:** [medix.app](https://medix-15sd.vercel.app/)
----
+
 
 ## 🛠️ Tech Stack
 
