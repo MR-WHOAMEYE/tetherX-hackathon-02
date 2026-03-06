@@ -7,14 +7,26 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
+import { apiGetNursePatients, apiRecordVitals, apiGetVitals } from '../../services/api';
 import HeroBanner from '../../components/HeroBanner';
 
 // ═══ SUB-TAB: Patient List ══════════════════════════════════════
-function PatientList({ patients, getPatientVitals }) {
+function PatientList({ patients, onRefresh }) {
     const [search, setSearch] = useState('');
     const [expandedId, setExpandedId] = useState(null);
+    const [vitalsMap, setVitalsMap] = useState({});
 
-    const filtered = patients.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.id.includes(search));
+    const filtered = patients.filter(p =>
+        p.name.toLowerCase().includes(search.toLowerCase()) || p.email.includes(search) || (p.phone || '').includes(search)
+    );
+
+    const loadVitals = async (email) => {
+        if (vitalsMap[email]) return;
+        try {
+            const resp = await apiGetVitals(email);
+            setVitalsMap(prev => ({ ...prev, [email]: resp.vitals || [] }));
+        } catch { setVitalsMap(prev => ({ ...prev, [email]: [] })); }
+    };
 
     return (
         <div>
@@ -27,12 +39,12 @@ function PatientList({ patients, getPatientVitals }) {
 
             {filtered.map(patient => {
                 const isExpanded = expandedId === patient.id;
-                const patientVitals = getPatientVitals(patient.id);
+                const patientVitals = vitalsMap[patient.email] || [];
                 const latestVitals = patientVitals[0];
 
                 return (
                     <div key={patient.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: 0, overflow: 'hidden' }}>
-                        <div onClick={() => setExpandedId(isExpanded ? null : patient.id)} style={{ padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '1rem', cursor: 'pointer' }}>
+                        <div onClick={() => { setExpandedId(isExpanded ? null : patient.id); if (!isExpanded) loadVitals(patient.email); }} style={{ padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '1rem', cursor: 'pointer' }}>
                             <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'linear-gradient(135deg, #0d9488, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, flexShrink: 0 }}>
                                 {patient.name.charAt(0)}
                             </div>
@@ -42,11 +54,11 @@ function PatientList({ patients, getPatientVitals }) {
                                     {patient.verified ? <ShieldCheck size={14} color="#10b981" style={{ marginLeft: 6, verticalAlign: -2 }} /> : <span className="badge badge-warning" style={{ marginLeft: 8, fontSize: '0.5625rem' }}>Unverified</span>}
                                 </div>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
-                                    {patient.id} · {patient.age}y · {patient.gender} · {patient.bloodGroup}
+                                    {patient.email} · {patient.age}y · {patient.gender} · {patient.blood_group}
                                 </div>
                             </div>
                             <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
-                                {patient.conditions.slice(0, 2).map(c => (
+                                {(patient.conditions || []).slice(0, 2).map(c => (
                                     <span key={c} className="badge badge-primary" style={{ fontSize: '0.625rem' }}>{c}</span>
                                 ))}
                             </div>
@@ -66,11 +78,11 @@ function PatientList({ patients, getPatientVitals }) {
                                     </div>
                                     <div style={{ padding: '0.75rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
                                         <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Address</div>
-                                        <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginTop: '0.125rem' }}>{patient.address}</div>
+                                        <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginTop: '0.125rem' }}>{patient.address || '—'}</div>
                                     </div>
                                 </div>
 
-                                {patient.allergies.length > 0 && (
+                                {(patient.allergies || []).length > 0 && (
                                     <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 'var(--radius-sm)' }}>
                                         <span style={{ fontSize: '0.6875rem', color: '#f87171', fontWeight: 600 }}>⚠ Allergies: </span>
                                         <span style={{ fontSize: '0.8125rem', color: '#fca5a5' }}>{patient.allergies.join(', ')}</span>
@@ -80,14 +92,14 @@ function PatientList({ patients, getPatientVitals }) {
                                 {latestVitals && (
                                     <div style={{ marginTop: '0.75rem' }}>
                                         <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.375rem' }}>
-                                            Latest Vitals — {new Date(latestVitals.recordedAt).toLocaleDateString()}
+                                            Latest Vitals — {new Date(latestVitals.recorded_at).toLocaleDateString()}
                                         </div>
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.375rem' }}>
                                             {[
-                                                { l: 'Temp', v: `${latestVitals.temperature}°F` },
-                                                { l: 'BP', v: `${latestVitals.bloodPressureSystolic}/${latestVitals.bloodPressureDiastolic}` },
-                                                { l: 'HR', v: `${latestVitals.heartRate} bpm` },
-                                                { l: 'SpO2', v: `${latestVitals.oxygenSaturation}%` },
+                                                { l: 'Temp', v: latestVitals.temperature ? `${latestVitals.temperature}°F` : '—' },
+                                                { l: 'BP', v: latestVitals.bp_systolic ? `${latestVitals.bp_systolic}/${latestVitals.bp_diastolic}` : '—' },
+                                                { l: 'HR', v: latestVitals.heart_rate ? `${latestVitals.heart_rate} bpm` : '—' },
+                                                { l: 'SpO2', v: latestVitals.oxygen_saturation ? `${latestVitals.oxygen_saturation}%` : '—' },
                                             ].map(item => (
                                                 <div key={item.l} style={{ padding: '0.375rem', background: 'var(--color-bg-primary)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
                                                     <div style={{ fontSize: '0.5625rem', color: 'var(--color-text-muted)' }}>{item.l}</div>
@@ -111,30 +123,84 @@ function PatientList({ patients, getPatientVitals }) {
 }
 
 // ═══ SUB-TAB: Register New Patient ══════════════════════════════
-function RegisterPatient({ registerPatient, nurseId, verifyPatient }) {
+function RegisterPatient({ nurseEmail, nurseName }) {
     const [form, setForm] = useState({
         name: '', email: '', phone: '', age: '', gender: 'Male', dateOfBirth: '',
         bloodGroup: 'O+', address: '', emergencyContact: '', conditions: '', allergies: '',
     });
     const [step, setStep] = useState('form'); // form, verify, done
     const [registeredPatient, setRegisteredPatient] = useState(null);
-    const [verifyCode] = useState(() => Math.floor(100000 + Math.random() * 900000).toString());
+    const [otpCode, setOtpCode] = useState('');
     const [enteredCode, setEnteredCode] = useState('');
     const [verifyError, setVerifyError] = useState('');
+    const [sendingOtp, setSendingOtp] = useState(false);
+    const [resending, setResending] = useState(false);
 
     const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        if (!form.name || !form.email || !form.phone || !form.age) return;
-        const patient = registerPatient(form, nurseId);
-        setRegisteredPatient(patient);
-        setStep('verify');
+    const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+    const sendOtp = async (patientName, patientEmail, code) => {
+        const { sendOtpEmail } = await import('../../services/emailService');
+        try {
+            await sendOtpEmail({ patientName, patientEmail, otp: code });
+            return true;
+        } catch (err) {
+            console.error('[OTP] Failed to send:', err);
+            return false;
+        }
     };
 
-    const handleVerify = () => {
-        if (enteredCode === verifyCode) {
-            verifyPatient(registeredPatient.id);
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!form.name || !form.email || !form.phone || !form.age) return;
+        setSendingOtp(true);
+        try {
+            const { apiRegisterPatient } = await import('../../services/api');
+            const result = await apiRegisterPatient({
+                name: form.name,
+                email: form.email,
+                phone: form.phone,
+                age: parseInt(form.age),
+                gender: form.gender,
+                date_of_birth: form.dateOfBirth,
+                blood_group: form.bloodGroup,
+                address: form.address,
+                emergency_contact: form.emergencyContact,
+                conditions: form.conditions,
+                allergies: form.allergies,
+                nurse_email: nurseEmail || '',
+                nurse_name: nurseName || '',
+            });
+            setRegisteredPatient(result.patient);
+            const code = generateOtp();
+            setOtpCode(code);
+            await sendOtp(form.name, form.email, code);
+            setSendingOtp(false);
+            setStep('verify');
+        } catch (err) {
+            setSendingOtp(false);
+            setVerifyError(err.message || 'Registration failed');
+        }
+    };
+
+    const handleResendOtp = async () => {
+        setResending(true);
+        setVerifyError('');
+        const code = generateOtp();
+        setOtpCode(code);
+        await sendOtp(registeredPatient.name, registeredPatient.email, code);
+        setResending(false);
+    };
+
+    const handleVerify = async () => {
+        if (enteredCode === otpCode) {
+            try {
+                const { apiVerifyPatient } = await import('../../services/api');
+                await apiVerifyPatient(registeredPatient.id);
+            } catch (err) {
+                console.warn('Verify API call failed:', err);
+            }
             setStep('done');
         } else {
             setVerifyError('Invalid verification code. Please try again.');
@@ -148,11 +214,20 @@ function RegisterPatient({ registerPatient, nurseId, verifyPatient }) {
                     <CheckCircle size={36} color="#10b981" />
                 </div>
                 <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>Patient Registered & Verified</h2>
-                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>{registeredPatient.name} — {registeredPatient.id}</p>
-                <p style={{ color: 'var(--color-text-tertiary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>Confirmation sent to {registeredPatient.email}</p>
-                <button className="btn btn-primary" onClick={() => { setStep('form'); setForm({ name: '', email: '', phone: '', age: '', gender: 'Male', dateOfBirth: '', bloodGroup: 'O+', address: '', emergencyContact: '', conditions: '', allergies: '' }); setRegisteredPatient(null); setEnteredCode(''); }}>
-                    <UserPlus size={16} /> Register Another Patient
-                </button>
+                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>{registeredPatient.name} — {registeredPatient.email}</p>
+                <p style={{ color: 'var(--color-text-tertiary)', fontSize: '0.875rem', marginBottom: '1rem' }}>Account saved to database. Confirmation sent to {registeredPatient.email}</p>
+
+                <div style={{ display: 'inline-block', padding: '1rem 1.5rem', background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', borderRadius: 'var(--radius-md)', textAlign: 'left', marginBottom: '1.5rem' }}>
+                    <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Patient Login Credentials</div>
+                    <div style={{ fontSize: '0.875rem', marginBottom: '0.25rem' }}><strong>Email:</strong> {registeredPatient.email}</div>
+                    <div style={{ fontSize: '0.875rem' }}><strong>Password:</strong> {registeredPatient.phone} <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>(phone number)</span></div>
+                </div>
+
+                <div>
+                    <button className="btn btn-primary" onClick={() => { setStep('form'); setForm({ name: '', email: '', phone: '', age: '', gender: 'Male', dateOfBirth: '', bloodGroup: 'O+', address: '', emergencyContact: '', conditions: '', allergies: '' }); setRegisteredPatient(null); setEnteredCode(''); setVerifyError(''); }}>
+                        <UserPlus size={16} /> Register Another Patient
+                    </button>
+                </div>
             </div>
         );
     }
@@ -164,16 +239,14 @@ function RegisterPatient({ registerPatient, nurseId, verifyPatient }) {
                     <ShieldCheck size={40} color="var(--color-accent)" style={{ marginBottom: '0.75rem' }} />
                     <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Verify Patient's Email</h3>
                     <p style={{ color: 'var(--color-text-tertiary)', fontSize: '0.875rem' }}>
-                        Verification code sent to <strong>{registeredPatient.email}</strong>
+                        A 6-digit verification code has been sent to <strong>{registeredPatient.email}</strong>
                     </p>
                 </div>
 
-                <div style={{ padding: '1rem', marginBottom: '1.5rem', background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: '0.375rem' }}>Simulated Email — Verification Code</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 800, fontFamily: 'var(--font-mono)', letterSpacing: '0.3em', color: 'var(--color-accent-light)' }}>
-                        {verifyCode}
-                    </div>
-                    <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>(In production, this would arrive in the patient's email)</div>
+                <div style={{ padding: '1rem', marginBottom: '1.5rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                    <Mail size={20} color="#059669" style={{ marginBottom: '0.375rem' }} />
+                    <div style={{ fontSize: '0.8125rem', color: '#065f46', fontWeight: 500 }}>OTP sent to patient's email inbox</div>
+                    <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>Ask the patient to check their email and share the code</div>
                 </div>
 
                 {verifyError && (
@@ -182,13 +255,24 @@ function RegisterPatient({ registerPatient, nurseId, verifyPatient }) {
 
                 <div style={{ marginBottom: '1.25rem' }}>
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Enter 6-digit Code</label>
-                    <input className="input" type="text" maxLength={6} placeholder="000000" value={enteredCode} onChange={e => setEnteredCode(e.target.value.replace(/\D/g, ''))} style={{ textAlign: 'center', fontSize: '1.5rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.25em', fontWeight: 700 }} />
+                    <input className="input" type="text" maxLength={6} placeholder="000000" value={enteredCode} onChange={e => { setEnteredCode(e.target.value.replace(/\D/g, '')); setVerifyError(''); }} style={{ textAlign: 'center', fontSize: '1.5rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.25em', fontWeight: 700 }} />
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
                     <button className="btn btn-secondary" onClick={() => setStep('form')} style={{ flex: 1 }}>← Back</button>
                     <button className="btn btn-primary" onClick={handleVerify} disabled={enteredCode.length !== 6} style={{ flex: 2 }}>
                         <ShieldCheck size={16} /> Verify & Complete
+                    </button>
+                </div>
+
+                <div style={{ textAlign: 'center' }}>
+                    <button
+                        type="button"
+                        onClick={handleResendOtp}
+                        disabled={resending}
+                        style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: resending ? 'not-allowed' : 'pointer', fontSize: '0.8125rem', fontWeight: 600, fontFamily: 'var(--font-sans)', opacity: resending ? 0.6 : 1 }}
+                    >
+                        {resending ? 'Resending...' : 'Resend OTP Code'}
                     </button>
                 </div>
             </div>
@@ -197,6 +281,9 @@ function RegisterPatient({ registerPatient, nurseId, verifyPatient }) {
 
     return (
         <form onSubmit={handleSubmit}>
+            {verifyError && step === 'form' && (
+                <div style={{ padding: '0.75rem 1rem', marginBottom: '1rem', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-md)', color: '#f87171', fontSize: '0.8125rem' }}>{verifyError}</div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                 <div>
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Full Name *</label>
@@ -256,15 +343,15 @@ function RegisterPatient({ registerPatient, nurseId, verifyPatient }) {
                 <input className="input" placeholder="e.g. Diabetes, Hypertension" value={form.conditions} onChange={e => handleChange('conditions', e.target.value)} />
             </div>
 
-            <button type="submit" className="btn btn-primary" style={{ minWidth: 220 }}>
-                <UserPlus size={16} /> Register Patient & Verify Email
+            <button type="submit" className="btn btn-primary" disabled={sendingOtp} style={{ minWidth: 220 }}>
+                {sendingOtp ? <><Mail size={16} /> Sending OTP...</> : <><UserPlus size={16} /> Register Patient & Send OTP</>}
             </button>
         </form>
     );
 }
 
 // ═══ SUB-TAB: Record Vitals ═════════════════════════════════════
-function RecordVitals({ patients, recordVitals, nurseId }) {
+function RecordVitals({ patients }) {
     const [selectedPatient, setSelectedPatient] = useState('');
     const [form, setForm] = useState({
         temperature: '', bloodPressureSystolic: '', bloodPressureDiastolic: '',
@@ -272,17 +359,43 @@ function RecordVitals({ patients, recordVitals, nurseId }) {
         bloodSugarFasting: '', bloodSugarPP: '', notes: '',
     });
     const [success, setSuccess] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
 
     const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         if (!selectedPatient) return;
-        recordVitals({ ...form, patientId: selectedPatient }, nurseId);
-        setSelectedPatient('');
-        setForm({ temperature: '', bloodPressureSystolic: '', bloodPressureDiastolic: '', heartRate: '', respiratoryRate: '', oxygenSaturation: '', weight: '', height: '', bloodSugarFasting: '', bloodSugarPP: '', notes: '' });
-        setSuccess(true);
-        setTimeout(() => setSuccess(false), 3000);
+        const patient = patients.find(p => p.id === selectedPatient);
+        if (!patient) return;
+
+        setSaving(true);
+        setError('');
+        try {
+            await apiRecordVitals({
+                patient_email: patient.email,
+                patient_name: patient.name,
+                bp_systolic: form.bloodPressureSystolic ? parseInt(form.bloodPressureSystolic) : null,
+                bp_diastolic: form.bloodPressureDiastolic ? parseInt(form.bloodPressureDiastolic) : null,
+                temperature: form.temperature ? parseFloat(form.temperature) : null,
+                heart_rate: form.heartRate ? parseInt(form.heartRate) : null,
+                respiratory_rate: form.respiratoryRate ? parseInt(form.respiratoryRate) : null,
+                oxygen_saturation: form.oxygenSaturation ? parseFloat(form.oxygenSaturation) : null,
+                weight: form.weight ? parseFloat(form.weight) : null,
+                height: form.height ? parseFloat(form.height) : null,
+                blood_sugar_fasting: form.bloodSugarFasting ? parseFloat(form.bloodSugarFasting) : null,
+                blood_sugar_pp: form.bloodSugarPP ? parseFloat(form.bloodSugarPP) : null,
+                sugar_level: form.bloodSugarFasting ? parseFloat(form.bloodSugarFasting) : null,
+                notes: form.notes,
+            });
+            setSelectedPatient('');
+            setForm({ temperature: '', bloodPressureSystolic: '', bloodPressureDiastolic: '', heartRate: '', respiratoryRate: '', oxygenSaturation: '', weight: '', height: '', bloodSugarFasting: '', bloodSugarPP: '', notes: '' });
+            setSuccess(true);
+            setTimeout(() => setSuccess(false), 3000);
+        } catch (err) {
+            setError(err?.response?.data?.detail || err?.message || 'Failed to save vitals');
+        } finally { setSaving(false); }
     };
 
     return (
@@ -292,12 +405,15 @@ function RecordVitals({ patients, recordVitals, nurseId }) {
                     <CheckCircle size={16} /> Vitals recorded successfully!
                 </div>
             )}
+            {error && (
+                <div style={{ padding: '0.75rem 1rem', marginBottom: '1rem', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-md)', color: '#f87171', fontSize: '0.8125rem' }}>{error}</div>
+            )}
 
             <div style={{ marginBottom: '1.25rem' }}>
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Select Patient *</label>
                 <select className="input" value={selectedPatient} onChange={e => setSelectedPatient(e.target.value)} required style={{ maxWidth: 400 }}>
                     <option value="">Choose patient...</option>
-                    {patients.map(p => <option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
+                    {patients.map(p => <option key={p.id} value={p.id}>{p.name} ({p.email})</option>)}
                 </select>
             </div>
 
@@ -350,8 +466,8 @@ function RecordVitals({ patients, recordVitals, nurseId }) {
                 <textarea className="input" rows={3} placeholder="Additional observations..." value={form.notes} onChange={e => handleChange('notes', e.target.value)} />
             </div>
 
-            <button type="submit" className="btn btn-primary" style={{ minWidth: 200 }}>
-                <Activity size={16} /> Save Vitals
+            <button type="submit" className="btn btn-primary" disabled={saving} style={{ minWidth: 200, opacity: saving ? 0.7 : 1 }}>
+                <Activity size={16} /> {saving ? 'Saving...' : 'Save Vitals'}
             </button>
         </form>
     );
@@ -361,9 +477,21 @@ function RecordVitals({ patients, recordVitals, nurseId }) {
 // ═══ MAIN NURSE DASHBOARD ═══════════════════════════════════════
 export default function NurseDashboard() {
     const { user } = useAuth();
-    const { patients, questions, registerPatient, verifyPatient, recordVitals, getPatientVitals, getUserNotifications, answerQuestion, sendAISuggestion, getPatient } = useApp();
+    const { questions, answerQuestion, sendAISuggestion, getPatient } = useApp();
     const [searchParams] = useSearchParams();
     const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'patients');
+    const [dbPatients, setDbPatients] = useState([]);
+    const [loadingPatients, setLoadingPatients] = useState(true);
+
+    const fetchPatients = async () => {
+        try {
+            const data = await apiGetNursePatients();
+            setDbPatients(Array.isArray(data) ? data : []);
+        } catch (err) { console.error('Failed to load patients:', err); }
+        finally { setLoadingPatients(false); }
+    };
+
+    useEffect(() => { fetchPatients(); }, []);
 
     useEffect(() => {
         const tab = searchParams.get('tab');
@@ -388,14 +516,14 @@ export default function NurseDashboard() {
             <HeroBanner
                 role="nurse"
                 title="Nurse Dashboard"
-                subtitle={`Welcome, ${user?.name}. You are assigned to the ${user?.department || 'General'} Department with ${patients.length} active patients.`}
+                subtitle={`Welcome, ${user?.name}. You are assigned to the ${user?.department || 'General'} Department with ${dbPatients.length} active patients.`}
             />
 
             {/* Stats */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
                 {[
-                    { label: 'Total Patients', value: patients.length, icon: Users, color: '#0d9488' },
-                    { label: 'Verified', value: patients.filter(p => p.verified).length, icon: ShieldCheck, color: '#10b981' },
+                    { label: 'Total Patients', value: dbPatients.length, icon: Users, color: '#0d9488' },
+                    { label: 'Verified', value: dbPatients.filter(p => p.verified).length, icon: ShieldCheck, color: '#10b981' },
                     { label: 'Vitals Today', value: 3, icon: Activity, color: '#047857' },
                     { label: 'Pending Questions', value: pendingCount, icon: MessageSquare, color: pendingCount > 0 ? '#f59e0b' : '#10b981' },
                 ].map(s => (
@@ -431,9 +559,9 @@ export default function NurseDashboard() {
 
             {/* Tab Content */}
             <div className="animate-fade-in">
-                {activeTab === 'patients' && <PatientList patients={patients} getPatientVitals={getPatientVitals} />}
-                {activeTab === 'register' && <RegisterPatient registerPatient={registerPatient} nurseId={user.id} verifyPatient={verifyPatient} />}
-                {activeTab === 'vitals' && <RecordVitals patients={patients} recordVitals={recordVitals} nurseId={user.id} />}
+                {activeTab === 'patients' && (loadingPatients ? <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading patients...</div> : <PatientList patients={dbPatients} onRefresh={fetchPatients} />)}
+                {activeTab === 'register' && <RegisterPatient nurseEmail={user.email} nurseName={user.name} />}
+                {activeTab === 'vitals' && (loadingPatients ? <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading patients...</div> : <RecordVitals patients={dbPatients} />)}
                 {activeTab === 'notifications' && (
                     <NurseNotifications questions={questions} getPatient={getPatient} answerQuestion={answerQuestion} sendAISuggestion={sendAISuggestion} nurseId={user.id} />
                 )}

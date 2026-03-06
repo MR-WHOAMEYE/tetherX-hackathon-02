@@ -53,6 +53,7 @@ export const apiListUsers = () => get('/auth/users');
 export const apiListDoctors = (department) => get('/auth/doctor-list', { department });
 export const apiGetNotifications = (doctorEmail, unreadOnly) => get('/auth/notifications', { doctor_email: doctorEmail, unread_only: unreadOnly });
 export const apiMarkNotificationRead = (notifId) => put(`/auth/notifications/${notifId}/read`);
+export const apiChangePassword = (currentPassword, newPassword) => put('/auth/change-password', { current_password: currentPassword, new_password: newPassword });
 
 // ── Patient ───────────────────────────────────────
 export const apiGetMyPrescriptions = (email) => get('/patient/my-prescriptions', { patient_email: email });
@@ -78,6 +79,9 @@ export const apiUpdateBooking = (bookingId, data) => put(`/doctor/bookings/${boo
 export const apiNurseDashboard = (department, nurseEmail) => get('/nurse/dashboard', { department, nurse_email: nurseEmail });
 export const apiRecordVitals = (data) => post('/nurse/vitals', data);
 export const apiGetVitals = (patientEmail) => get('/nurse/vitals', { patient_email: patientEmail });
+export const apiRegisterPatient = (data) => post('/nurse/register-patient', data);
+export const apiVerifyPatient = (patientId) => put(`/nurse/verify-patient/${patientId}`);
+export const apiGetNursePatients = (nurseEmail) => get('/nurse/patients', { nurse_email: nurseEmail });
 
 // ── Response Suggestions (AI Pipeline) ────────────
 export const apiSubmitPatientQuery = (data) => post('/response-suggestions/queries', data);

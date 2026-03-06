@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
+import { apiGetPatientProfile, apiGetMyVitals } from '../../services/api';
 import { generateReportPDF } from '../../services/pdfService';
 import HeroBanner from '../../components/HeroBanner';
 
@@ -333,21 +334,43 @@ export default function PatientDashboard() {
     } = useApp();
     const [searchParams] = useSearchParams();
     const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'reports');
+    const [patient, setPatient] = useState(null);
+    const [dbVitals, setDbVitals] = useState([]);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab) {
-            setActiveTab(tab);
-        } else {
-            setActiveTab('reports');
-        }
+        if (tab) setActiveTab(tab);
+        else setActiveTab('reports');
     }, [searchParams]);
 
-    const patient = getPatientByUserId(user?.id);
-    const patientReports = patient ? getPatientReports(patient.id) : [];
-    const patientRx = patient ? getPatientPrescriptions(patient.id) : [];
-    const patientVitals = patient ? getPatientVitals(patient.id) : [];
-    const patientQuestions = patient ? getPatientQuestions(patient.id) : [];
+    // Fetch patient profile from MongoDB
+    useEffect(() => {
+        if (!user?.email) return;
+        (async () => {
+            try {
+                const resp = await apiGetPatientProfile(user.email);
+                if (resp?.profile) {
+                    setPatient(resp.profile);
+                    // Also fetch vitals
+                    try {
+                        const vResp = await apiGetMyVitals(user.email);
+                        setDbVitals(vResp?.vitals || []);
+                    } catch {}
+                }
+            } catch (err) { console.error('Failed to load patient profile:', err); }
+            finally { setLoading(false); }
+        })();
+    }, [user?.email]);
+
+    // Fallback to mock data if not in MongoDB
+    const mockPatient = getPatientByUserId(user?.id);
+    const effectivePatient = patient || mockPatient;
+
+    const patientReports = effectivePatient ? getPatientReports(effectivePatient.id) : [];
+    const patientRx = effectivePatient ? getPatientPrescriptions(effectivePatient.id) : [];
+    const patientVitals = dbVitals.length > 0 ? dbVitals : (effectivePatient ? getPatientVitals(effectivePatient.id) : []);
+    const patientQuestions = effectivePatient ? getPatientQuestions(effectivePatient.id) : [];
     const notifs = getUserNotifications(user?.id);
     const unreadCount = notifs.filter(n => !n.read).length;
 
@@ -359,7 +382,18 @@ export default function PatientDashboard() {
         { id: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
     ];
 
-    if (!patient) {
+    if (loading) {
+        return (
+            <div className="page-container">
+                <div style={{ textAlign: 'center', padding: '4rem 2rem' }}>
+                    <Loader2 size={40} color="#059669" style={{ animation: 'spin 1s linear infinite', marginBottom: '1rem' }} />
+                    <p style={{ color: 'var(--color-text-secondary)' }}>Loading your profile...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!effectivePatient) {
         return (
             <div className="page-container">
                 <div style={{ textAlign: 'center', padding: '4rem 2rem' }}>
@@ -377,14 +411,14 @@ export default function PatientDashboard() {
         <div className="page-container">
             <HeroBanner
                 role="patient"
-                title={`Welcome, ${patient.name}`}
-                subtitle={`${patient.id} · ${patient.age} yrs · ${patient.gender} · Blood Group: ${patient.bloodGroup}`}
+                title={`Welcome, ${effectivePatient.name}`}
+                subtitle={`${effectivePatient.email} · ${effectivePatient.age} yrs · ${effectivePatient.gender || ''} · Blood Group: ${effectivePatient.blood_group || effectivePatient.bloodGroup || ''}`}
             >
-                {patient.conditions.length > 0 && (
+                {(effectivePatient.conditions || []).length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, color: '#5eead4' }}>Known Conditions:</div>
                         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                            {patient.conditions.map(c => (
+                            {effectivePatient.conditions.map(c => (
                                 <span key={c} style={{
                                     background: 'rgba(94, 234, 212, 0.1)',
                                     padding: '0.25rem 0.75rem',
@@ -443,7 +477,7 @@ export default function PatientDashboard() {
             {/* Tab Content */}
             <div className="animate-fade-in">
                 {activeTab === 'reports' && (
-                    <MyReports reports={patientReports} patientId={patient.id} getUser={getUser} prescriptions={prescriptions} vitals={vitals} patient={patient} />
+                    <MyReports reports={patientReports} patientId={effectivePatient.id} getUser={getUser} prescriptions={prescriptions} vitals={vitals} patient={effectivePatient} />
                 )}
 
                 {activeTab === 'prescriptions' && (
@@ -505,21 +539,21 @@ export default function PatientDashboard() {
                                 <p>No vitals recorded yet</p>
                             </div>
                         ) : (
-                            patientVitals.map(v => (
-                                <div key={v.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: '1.25rem' }}>
+                            patientVitals.map((v, idx) => (
+                                <div key={v.id || idx} className="card-flat" style={{ marginBottom: '0.75rem', padding: '1.25rem' }}>
                                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', marginBottom: '0.75rem' }}>
-                                        Recorded on {new Date(v.recordedAt).toLocaleString()}
+                                        Recorded on {new Date(v.recorded_at || v.recordedAt).toLocaleString()}
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
                                         {[
                                             { l: 'Temperature', v: `${v.temperature}°F`, w: v.temperature > 99.5 },
-                                            { l: 'Blood Pressure', v: `${v.bloodPressureSystolic}/${v.bloodPressureDiastolic} mmHg`, w: v.bloodPressureSystolic > 140 },
-                                            { l: 'Heart Rate', v: `${v.heartRate} bpm` },
-                                            { l: 'SpO2', v: `${v.oxygenSaturation}%`, w: v.oxygenSaturation < 95 },
+                                            { l: 'Blood Pressure', v: `${v.bp_systolic || v.bloodPressureSystolic}/${v.bp_diastolic || v.bloodPressureDiastolic} mmHg`, w: (v.bp_systolic || v.bloodPressureSystolic) > 140 },
+                                            { l: 'Heart Rate', v: `${v.heart_rate || v.heartRate} bpm` },
+                                            { l: 'SpO2', v: `${v.oxygen_saturation || v.oxygenSaturation}%`, w: (v.oxygen_saturation || v.oxygenSaturation) < 95 },
                                             { l: 'Weight', v: `${v.weight} kg` },
-                                            { l: 'Resp Rate', v: `${v.respiratoryRate}/min` },
-                                            { l: 'Blood Sugar (Fasting)', v: `${v.bloodSugarFasting} mg/dL`, w: v.bloodSugarFasting > 130 },
-                                            { l: 'Blood Sugar (PP)', v: `${v.bloodSugarPP} mg/dL`, w: v.bloodSugarPP > 180 },
+                                            { l: 'Resp Rate', v: `${v.respiratory_rate || v.respiratoryRate}/min` },
+                                            { l: 'Blood Sugar (Fasting)', v: `${v.blood_sugar_fasting || v.bloodSugarFasting} mg/dL`, w: (v.blood_sugar_fasting || v.bloodSugarFasting) > 130 },
+                                            { l: 'Blood Sugar (PP)', v: `${v.blood_sugar_pp || v.bloodSugarPP} mg/dL`, w: (v.blood_sugar_pp || v.bloodSugarPP) > 180 },
                                         ].map(item => (
                                             <div key={item.l} style={{ padding: '0.5rem', background: item.w ? 'rgba(245,158,11,0.06)' : 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', border: item.w ? '1px solid rgba(245,158,11,0.2)' : 'none' }}>
                                                 <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)' }}>{item.l}</div>
@@ -535,7 +569,7 @@ export default function PatientDashboard() {
                 )}
 
                 {activeTab === 'ask' && (
-                    <AskQuestion patientId={patient.id} patientUserId={user.id} submitQuestion={submitQuestion} />
+                    <AskQuestion patientId={effectivePatient.id} patientUserId={user.id} submitQuestion={submitQuestion} />
                 )}
 
                 {activeTab === 'notifications' && (

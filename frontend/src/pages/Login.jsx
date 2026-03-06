@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, Zap, Shield, Activity, Users } from 'lucide-react';
+import DNAHelix from '../components/DNAHelix';
 
 export default function Login() {
     const { login } = useAuth();
@@ -59,47 +60,10 @@ export default function Login() {
                 overflow: 'hidden',
                 color: 'white',
             }}>
-                {/* Decorative animated nodes */}
-                <svg style={{
-                    position: 'absolute', inset: 0, width: '100%', height: '100%',
-                    opacity: 0.12, pointerEvents: 'none',
-                }}>
-                    <defs>
-                        <radialGradient id="nodeGlow" cx="50%" cy="50%" r="50%">
-                            <stop offset="0%" stopColor="#10b981" stopOpacity="0.8" />
-                            <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
-                        </radialGradient>
-                    </defs>
-                    {/* DNA helix pattern */}
-                    {Array.from({ length: 18 }).map((_, i) => {
-                        const y = 50 + i * 50;
-                        const x1 = 200 + Math.sin(i * 0.5) * 120;
-                        const x2 = 200 - Math.sin(i * 0.5) * 120;
-                        return (
-                            <g key={i}>
-                                <circle cx={x1} cy={y} r={4} fill="#10b981" opacity={0.4 + Math.random() * 0.4}>
-                                    <animate attributeName="opacity" values={`${0.3};${0.8};${0.3}`} dur={`${2 + Math.random() * 2}s`} repeatCount="indefinite" />
-                                </circle>
-                                <circle cx={x2} cy={y} r={3} fill="#14b8a6" opacity={0.3 + Math.random() * 0.3}>
-                                    <animate attributeName="opacity" values={`${0.2};${0.7};${0.2}`} dur={`${2.5 + Math.random() * 2}s`} repeatCount="indefinite" />
-                                </circle>
-                                <line x1={x1} y1={y} x2={x2} y2={y} stroke="#10b981" strokeWidth="0.5" opacity="0.3" />
-                                {i < 17 && (
-                                    <>
-                                        <line x1={x1} y1={y} x2={200 + Math.sin((i + 1) * 0.5) * 120} y2={y + 50} stroke="#10b981" strokeWidth="0.5" opacity="0.2" />
-                                        <line x1={x2} y1={y} x2={200 - Math.sin((i + 1) * 0.5) * 120} y2={y + 50} stroke="#14b8a6" strokeWidth="0.5" opacity="0.15" />
-                                    </>
-                                )}
-                            </g>
-                        );
-                    })}
-                    {/* Scattered outer dots */}
-                    {Array.from({ length: 25 }).map((_, i) => (
-                        <circle key={`dot-${i}`} cx={40 + Math.random() * 350} cy={30 + Math.random() * 900} r={1.5 + Math.random() * 2} fill="#10b981" opacity={0.15 + Math.random() * 0.25}>
-                            <animate attributeName="opacity" values={`${0.1};${0.4};${0.1}`} dur={`${3 + Math.random() * 3}s`} repeatCount="indefinite" />
-                        </circle>
-                    ))}
-                </svg>
+                {/* 3D DNA Helix */}
+                <div style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'auto' }}>
+                    <DNAHelix />
+                </div>
 
                 {/* Logo */}
                 <div style={{ position: 'relative', zIndex: 2 }}>

@@ -3,7 +3,7 @@ import {
     defaultPatients, defaultVitals, defaultPrescriptions,
     defaultReports, defaultQuestions, defaultNotifications, defaultUsers
 } from '../data/mockData';
-import { getUsers } from '../services/authService';
+
 import { sendPatientEmail } from '../services/emailService';
 
 const AppContext = createContext(null);
@@ -33,8 +33,7 @@ export const AppProvider = ({ children }) => {
 
     // ─── Helpers ──────────────────────────────────────────
     const getUser = useCallback((userId) => {
-        const users = getUsers();
-        return users.find(u => u.id === userId);
+        return defaultUsers.find(u => u.id === userId);
     }, []);
 
     const getPatient = useCallback((patientId) => {
@@ -75,8 +74,7 @@ export const AppProvider = ({ children }) => {
         addToast(`Patient ${newPatient.name} registered successfully`, 'success');
 
         // Notify doctors
-        const users = getUsers();
-        const doctors = users.filter(u => u.role === 'doctor');
+        const doctors = defaultUsers.filter(u => u.role === 'doctor');
         const newNotifs = doctors.map(doc => ({
             id: `N${Date.now()}_${doc.id}`,
             userId: doc.id,
@@ -198,8 +196,7 @@ export const AppProvider = ({ children }) => {
         addToast('Your question has been submitted with AI suggestions', 'success');
 
         // Notify all doctors and nurses
-        const users = getUsers();
-        const staffUsers = users.filter(u => u.role === 'doctor' || u.role === 'nurse');
+        const staffUsers = defaultUsers.filter(u => u.role === 'doctor' || u.role === 'nurse');
         const patient = patients.find(p => p.id === patientId);
 
         const newNotifs = staffUsers.map(staff => ({
