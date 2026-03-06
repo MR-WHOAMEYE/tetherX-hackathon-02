@@ -6,7 +6,7 @@ from routers import (
     dashboard, workload, sla, predictive, root_cause,
     digital_twin, simulation, optimization, sentiment,
     alerts, strategic, financial, assistant, reports, settings,
-    auth, patient_api, doctor_api, nurse_api, admin_api, ward_api,
+    auth, patient_api, doctor_api, nurse_api, ward_api,
     response_suggestions
 )
 
@@ -48,7 +48,6 @@ app.include_router(auth.router)
 app.include_router(patient_api.router)
 app.include_router(doctor_api.router)
 app.include_router(nurse_api.router)
-app.include_router(admin_api.router)
 app.include_router(ward_api.router)
 app.include_router(response_suggestions.router)
 
@@ -89,23 +88,10 @@ async def preload_caches():
         except Exception as e:
             print(f"[STARTUP] Ward cache preload error: {e}")
     
-    def preload_admin_data():
-        try:
-            admin_api.admin_dashboard()
-            admin_api.recent_prescriptions()
-            admin_api.recent_diagnoses()
-            admin_api.recent_vitals()
-            admin_api.recent_bookings()
-            admin_api.department_stats()
-            print("[STARTUP] Admin dashboard cache warmed")
-        except Exception as e:
-            print(f"[STARTUP] Admin cache preload error: {e}")
-    
     # Run preloads in thread pool to not block startup
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         executor.submit(preload_nurse_dashboard)
         executor.submit(preload_ward_data)
-        executor.submit(preload_admin_data)
     
     print("[STARTUP] Cache preloading initiated")
 

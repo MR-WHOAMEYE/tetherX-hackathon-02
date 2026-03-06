@@ -1,149 +1,252 @@
-import { NavLink, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
 import {
-    // Admin
-    Activity, ClipboardList, Brain, Microscope, Target, FileText, Settings, Users,
-    // Doctor
-    Stethoscope, CalendarDays,
-    // Nurse
-    Heart, UserPlus,
-    // Patient
-    CalendarCheck, User,
-    // AI Response Suggestions
-    MessageSquareText, Sparkles,
-    // Shared
-    LogOut
+    LayoutDashboard, FileText, Pill, Activity, Bell, Users,
+    UserPlus, Brain, ChevronLeft, ChevronRight, LogOut,
+    Stethoscope, HeartPulse, UserCircle, Zap, MessageSquare
 } from 'lucide-react';
 
-const allNavItems = [
-    // ═══ ADMIN ═══
-    { path: '/', icon: Activity, label: 'Dashboard', color: '#14B8A6', roles: ['admin'] },
-    { path: '/operations', icon: ClipboardList, label: 'Operations', color: '#0EA5E9', roles: ['admin'] },
-    { path: '/intelligence', icon: Brain, label: 'Intelligence', color: '#A78BFA', roles: ['admin'] },
-    { path: '/simulation', icon: Microscope, label: 'Simulation', color: '#F59E0B', roles: ['admin'] },
-    { path: '/strategy', icon: Target, label: 'Strategy', color: '#EC4899', roles: ['admin'] },
-    { path: '/reports', icon: FileText, label: 'Reports', color: '#10B981', roles: ['admin'] },
-    { path: '/settings', icon: Settings, label: 'Settings', color: '#6B7280', roles: ['admin'] },
-    { path: '/admin/users', icon: Users, label: 'Users', color: '#F97316', roles: ['admin'] },
+const roleNavConfig = {
+    doctor: {
+        color: '#059669',
+        gradient: 'linear-gradient(135deg, #059669, #10b981)',
+        label: 'Doctor Portal',
+        icon: Stethoscope,
+    },
+    nurse: {
+        color: '#0d9488',
+        gradient: 'linear-gradient(135deg, #0d9488, #14b8a6)',
+        label: 'Nurse Portal',
+        icon: HeartPulse,
+    },
+    patient: {
+        color: '#047857',
+        gradient: 'linear-gradient(135deg, #047857, #059669)',
+        label: 'Patient Portal',
+        icon: UserCircle,
+    },
+};
 
-    // ═══ DOCTOR ═══
-    { path: '/', icon: Stethoscope, label: 'Dashboard', color: '#3B82F6', roles: ['doctor'] },
-    { path: '/patient-management', icon: Users, label: 'Patients', color: '#8B5CF6', roles: ['doctor'] },
-    { path: '/appointment-management', icon: CalendarDays, label: 'Appts', color: '#F59E0B', roles: ['doctor'] },
-    { path: '/reports', icon: FileText, label: 'Reports', color: '#10B981', roles: ['doctor'] },
-
-    // ═══ NURSE ═══
-    { path: '/', icon: Heart, label: 'Dashboard', color: '#10B981', roles: ['nurse'] },
-    { path: '/patient-vitals', icon: Activity, label: 'Vitals', color: '#EF4444', roles: ['nurse'] },
-    { path: '/register-patient', icon: UserPlus, label: 'Register', color: '#3B82F6', roles: ['nurse'] },
-    { path: '/reports', icon: FileText, label: 'Reports', color: '#10B981', roles: ['nurse'] },
-
-    // ═══ PATIENT ═══
-    { path: '/', icon: Heart, label: 'My Health', color: '#F59E0B', roles: ['patient'] },
-    { path: '/book-appointment', icon: CalendarCheck, label: 'Book', color: '#3B82F6', roles: ['patient'] },
-    { path: '/patient-queries', icon: MessageSquareText, label: 'Queries', color: '#14B8A6', roles: ['patient'] },
-    { path: '/profile', icon: User, label: 'Profile', color: '#8B5CF6', roles: ['patient'] },
-    { path: '/reports', icon: FileText, label: 'Reports', color: '#10B981', roles: ['patient'] },
-
-    // ═══ AI RESPONSE SUGGESTIONS (Staff) ═══
-    { path: '/response-suggestions', icon: Sparkles, label: 'AI Resp', color: '#8B5CF6', roles: ['admin', 'doctor', 'nurse'] },
-];
-
-export default function Sidebar({ user, onLogout }) {
+export default function Sidebar() {
+    const [collapsed, setCollapsed] = useState(false);
+    const navigate = useNavigate();
     const location = useLocation();
+    const { user, logout } = useAuth();
+    const { questions, getUserNotifications } = useApp();
+
     const role = user?.role || 'patient';
-    const navItems = allNavItems.filter(item => item.roles.includes(role));
+    const config = roleNavConfig[role];
+    const RoleIcon = config.icon;
+
+    const pendingQCount = questions.filter(q => q.status === 'pending').length;
+    const notifs = getUserNotifications(user?.id);
+    const unreadCount = notifs.filter(n => !n.read).length;
+
+    const navItems = {
+        doctor: [
+            { path: '/doctor', label: 'Dashboard', icon: LayoutDashboard },
+            { path: '/doctor?tab=patients', label: 'My Patients', icon: Users },
+            { path: '/doctor?tab=prescribe', label: 'Prescribe', icon: Pill },
+            { path: '/doctor?tab=reports', label: 'Reports', icon: FileText },
+            { path: '/doctor?tab=notifications', label: 'Patient Questions', icon: MessageSquare, badge: pendingQCount },
+        ],
+        nurse: [
+            { path: '/nurse', label: 'Dashboard', icon: LayoutDashboard },
+            { path: '/nurse?tab=patients', label: 'Patient List', icon: Users },
+            { path: '/nurse?tab=register', label: 'Register Patient', icon: UserPlus },
+            { path: '/nurse?tab=vitals', label: 'Record Vitals', icon: Activity },
+            { path: '/nurse?tab=notifications', label: 'Questions', icon: MessageSquare, badge: pendingQCount },
+        ],
+        patient: [
+            { path: '/patient', label: 'Dashboard', icon: LayoutDashboard },
+            { path: '/patient?tab=reports', label: 'My Reports', icon: FileText },
+            { path: '/patient?tab=prescriptions', label: 'Prescriptions', icon: Pill },
+            { path: '/patient?tab=vitals', label: 'My Vitals', icon: Activity },
+            { path: '/patient?tab=ask', label: 'Ask AI', icon: Brain },
+            { path: '/patient?tab=notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
+        ],
+    };
+
+    const items = navItems[role] || [];
+
+    const handleNavigate = (path) => {
+        navigate(path);
+    };
+
+    const handleLogout = () => {
+        logout();
+        navigate('/login');
+    };
+
+    const isActive = (itemPath) => {
+        const [base, query] = itemPath.split('?');
+        const currentBase = location.pathname;
+        const currentSearch = location.search;
+
+        if (!query) {
+            return currentBase === base && !currentSearch;
+        }
+        return currentBase === base && currentSearch === `?${query}`;
+    };
 
     return (
-        <nav className="fixed bottom-0 left-0 right-0 z-[100] px-4 pb-4 pointer-events-none">
-            <motion.div
-                initial={{ y: 60, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                className="pointer-events-auto mx-auto max-w-2xl rounded-3xl px-3 py-2.5
-                    flex items-center justify-between relative overflow-hidden"
-                style={{
-                    background: 'linear-gradient(135deg, rgba(4,47,46,0.92) 0%, rgba(10,61,60,0.95) 50%, rgba(13,79,77,0.92) 100%)',
-                    backdropFilter: 'blur(20px)',
-                    boxShadow: '0 8px 40px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.08), inset 0 1px 0 rgba(255,255,255,0.06)',
-                }}
-            >
-                {/* Subtle top shine */}
-                <div className="absolute top-0 left-[10%] right-[10%] h-[1px] bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+        <aside
+            style={{
+                width: collapsed ? 72 : 260,
+                height: '100vh',
+                position: 'fixed',
+                left: 0,
+                top: 0,
+                background: 'var(--color-bg-secondary)',
+                borderRight: '1px solid var(--color-border)',
+                display: 'flex',
+                flexDirection: 'column',
+                transition: 'width 0.25s ease',
+                zIndex: 100,
+                overflow: 'hidden',
+            }}
+        >
+            {/* Brand */}
+            <div style={{
+                padding: collapsed ? '1.25rem 0.5rem' : '1.25rem 1.25rem',
+                borderBottom: '1px solid var(--color-border-light)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                justifyContent: collapsed ? 'center' : 'flex-start',
+            }}>
+                <div style={{
+                    width: 40, height: 40, borderRadius: 'var(--radius-md)',
+                    background: config.gradient,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                }}>
+                    <Zap size={22} color="white" />
+                </div>
+                {!collapsed && (
+                    <div style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontWeight: 700, fontSize: '1.0625rem' }}>TetherX</div>
+                        <div style={{ fontSize: '0.6875rem', color: config.color, fontWeight: 500 }}>{config.label}</div>
+                    </div>
+                )}
+            </div>
 
-                {navItems.map((item, idx) => {
-                    const isActive = item.path === '/'
-                        ? location.pathname === '/'
-                        : location.pathname.startsWith(item.path);
+            {/* User mini-profile */}
+            {!collapsed && (
+                <div style={{
+                    padding: '0.875rem 1.25rem',
+                    borderBottom: '1px solid var(--color-border-light)',
+                    display: 'flex', alignItems: 'center', gap: '0.625rem',
+                }}>
+                    <div style={{
+                        width: 34, height: 34, borderRadius: '50%',
+                        background: config.gradient,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: 'white', fontWeight: 700, fontSize: '0.75rem', flexShrink: 0,
+                    }}>
+                        {user?.name?.charAt(0)}
+                    </div>
+                    <div style={{ overflow: 'hidden' }}>
+                        <div style={{ fontSize: '0.8125rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {user?.name}
+                        </div>
+                        <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>
+                            {role}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Navigation */}
+            <nav style={{ flex: 1, padding: '0.75rem 0.5rem', overflowY: 'auto' }}>
+                {items.map(item => {
+                    const Icon = item.icon;
+                    const active = isActive(item.path);
 
                     return (
-                        <NavLink
-                            key={item.path + item.label + idx}
-                            to={item.path}
-                            end={item.path === '/'}
-                            className="relative flex flex-col items-center justify-center flex-1 py-1.5 cursor-pointer group"
+                        <button
+                            key={item.path}
+                            onClick={() => handleNavigate(item.path)}
+                            title={collapsed ? item.label : undefined}
+                            style={{
+                                width: '100%',
+                                padding: collapsed ? '0.75rem' : '0.625rem 1rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.625rem',
+                                justifyContent: collapsed ? 'center' : 'flex-start',
+                                background: active ? `${config.color}15` : 'transparent',
+                                border: 'none',
+                                borderRadius: 'var(--radius-md)',
+                                color: active ? config.color : 'var(--color-text-secondary)',
+                                fontWeight: active ? 600 : 400,
+                                fontSize: '0.8125rem',
+                                cursor: 'pointer',
+                                marginBottom: '0.25rem',
+                                transition: 'all 0.15s ease',
+                                position: 'relative',
+                                fontFamily: 'var(--font-sans)',
+                                borderLeft: active ? `3px solid ${config.color}` : '3px solid transparent',
+                            }}
                         >
-                            {isActive && (
-                                <motion.div
-                                    layoutId="nav-pill"
-                                    className="absolute inset-0.5 rounded-2xl"
-                                    style={{
-                                        background: `radial-gradient(ellipse at center, ${item.color}15 0%, transparent 70%)`,
-                                        boxShadow: `inset 0 0 20px ${item.color}08`,
-                                    }}
-                                    transition={{ type: 'spring', stiffness: 400, damping: 28 }}
-                                />
+                            <Icon size={18} />
+                            {!collapsed && <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>}
+                            {!collapsed && item.badge > 0 && (
+                                <span style={{
+                                    background: '#ef4444', color: 'white',
+                                    fontSize: '0.625rem', fontWeight: 700,
+                                    padding: '0.0625rem 0.375rem', borderRadius: 'var(--radius-full)',
+                                    minWidth: 20, textAlign: 'center',
+                                }}>{item.badge}</span>
                             )}
-
-                            {isActive && (
-                                <motion.div
-                                    layoutId="nav-dot"
-                                    className="absolute -top-0.5 w-6 h-[3px] rounded-full"
-                                    style={{
-                                        background: `linear-gradient(90deg, transparent, ${item.color}, transparent)`,
-                                        boxShadow: `0 0 8px ${item.color}60`,
-                                    }}
-                                    transition={{ type: 'spring', stiffness: 400, damping: 28 }}
-                                />
+                            {collapsed && item.badge > 0 && (
+                                <span style={{
+                                    position: 'absolute', top: 4, right: 4,
+                                    width: 8, height: 8, borderRadius: '50%',
+                                    background: '#ef4444',
+                                }} />
                             )}
-
-                            <motion.div
-                                animate={isActive ? { y: -1, scale: 1.1 } : { y: 0, scale: 1 }}
-                                transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-                            >
-                                <item.icon size={20}
-                                    className="relative z-10 transition-colors duration-300"
-                                    style={{ color: isActive ? item.color : 'rgba(255,255,255,0.3)' }}
-                                />
-                            </motion.div>
-
-                            <motion.span
-                                animate={isActive ? { opacity: 1 } : { opacity: 0.35 }}
-                                transition={{ duration: 0.25 }}
-                                className="relative z-10 text-[9px] mt-0.5 font-semibold tracking-tight"
-                                style={{ color: isActive ? item.color : 'rgba(255,255,255,0.25)' }}
-                            >
-                                {item.label}
-                            </motion.span>
-
-                            {!isActive && (
-                                <div className="absolute inset-1 rounded-2xl bg-white/0 group-hover:bg-white/5 transition-colors duration-200" />
-                            )}
-                        </NavLink>
+                        </button>
                     );
                 })}
+            </nav>
 
-                {/* Logout */}
-                <button onClick={onLogout}
-                    className="relative flex flex-col items-center justify-center flex-shrink-0 px-2.5 py-1.5 cursor-pointer group"
-                    title={`Logout (${user?.name || 'User'})`}>
-                    <LogOut size={18}
-                        className="relative z-10 text-white/25 group-hover:text-rose-400 transition-colors duration-300" />
-                    <span className="relative z-10 text-[9px] mt-0.5 font-semibold tracking-tight text-white/20 group-hover:text-rose-400 transition-colors">
-                        Logout
-                    </span>
+            {/* Footer */}
+            <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--color-border-light)' }}>
+                <button
+                    onClick={handleLogout}
+                    style={{
+                        width: '100%',
+                        padding: collapsed ? '0.75rem' : '0.625rem 1rem',
+                        display: 'flex', alignItems: 'center', gap: '0.625rem',
+                        justifyContent: collapsed ? 'center' : 'flex-start',
+                        background: 'rgba(239,68,68,0.06)', border: 'none',
+                        borderRadius: 'var(--radius-md)',
+                        color: '#f87171', fontSize: '0.8125rem', cursor: 'pointer',
+                        fontFamily: 'var(--font-sans)', fontWeight: 500,
+                    }}
+                >
+                    <LogOut size={18} />
+                    {!collapsed && 'Sign Out'}
                 </button>
-            </motion.div>
-        </nav>
+
+                <button
+                    onClick={() => setCollapsed(!collapsed)}
+                    style={{
+                        width: '100%', marginTop: '0.375rem',
+                        padding: collapsed ? '0.5rem' : '0.5rem 1rem',
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        justifyContent: collapsed ? 'center' : 'flex-start',
+                        background: 'none', border: 'none',
+                        color: 'var(--color-text-muted)', fontSize: '0.75rem',
+                        cursor: 'pointer', fontFamily: 'var(--font-sans)',
+                    }}
+                >
+                    {collapsed ? <ChevronRight size={16} /> : <><ChevronLeft size={16} /> Collapse</>}
+                </button>
+            </div>
+        </aside>
     );
 }

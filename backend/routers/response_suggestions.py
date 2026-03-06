@@ -17,9 +17,21 @@ from mongo import (
     prescriptions_col, bookings_col, vitals_col
 )
 
-# Add ai-response-suggestions to path
-AI_PIPELINE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai-response-suggestions")
-sys.path.insert(0, AI_PIPELINE_DIR)
+# Add ai-response-suggestions to path.
+# Support both layouts:
+# 1) <repo>/ai-response-suggestions
+# 2) <repo>/backend/ai-response-suggestions
+_ROUTERS_DIR = os.path.dirname(os.path.abspath(__file__))
+_BACKEND_DIR = os.path.dirname(_ROUTERS_DIR)
+_REPO_ROOT = os.path.dirname(_BACKEND_DIR)
+_PIPELINE_CANDIDATES = [
+    os.path.join(_REPO_ROOT, "ai-response-suggestions"),
+    os.path.join(_BACKEND_DIR, "ai-response-suggestions"),
+]
+for _candidate in _PIPELINE_CANDIDATES:
+    if os.path.isdir(_candidate):
+        sys.path.insert(0, _candidate)
+        break
 
 from pipeline import run_pipeline
 

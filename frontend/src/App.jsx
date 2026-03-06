@@ -1,113 +1,137 @@
-import { useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { AppProvider } from './context/AppContext';
 import Sidebar from './components/Sidebar';
-import FloatingAssistant from './components/FloatingAssistant';
+import TopBar from './components/TopBar';
+import NotificationToast from './components/NotificationToast';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import VerifyEmail from './pages/VerifyEmail';
+import DoctorDashboard from './pages/doctor/DoctorDashboard';
+import NurseDashboard from './pages/nurse/NurseDashboard';
+import PatientDashboard from './pages/patient/PatientDashboard';
 
-// Admin shared pages
-import Dashboard from './pages/Dashboard';
-import Operations from './pages/groups/Operations';
-import Intelligence from './pages/groups/Intelligence';
-import SimulationGroup from './pages/groups/SimulationGroup';
-import Strategy from './pages/groups/Strategy';
-import Reports from './pages/Reports';
-import SettingsPage from './pages/Settings';
-import LoginPage from './pages/LoginPage';
-import UserManagement from './pages/UserManagement';
+// ─── Protected Route ────────────────────────────────────────────
+function ProtectedRoute({ children, allowedRoles }) {
+  const { user, isAuthenticated, loading } = useAuth();
 
-// Doctor pages
-import DoctorDashboard from './pages/DoctorDashboard';
-import PatientManagement from './pages/PatientManagement';
-import AppointmentManagement from './pages/AppointmentManagement';
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--color-bg-primary)',
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="loading-spinner" style={{ margin: '0 auto 1rem' }} />
+          <p style={{ color: 'var(--color-text-tertiary)' }}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
-// Nurse pages
-import NurseDashboard from './pages/NurseDashboard';
-import PatientVitals from './pages/PatientVitals';
-import RegisterPatient from './pages/RegisterPatient';
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
 
-// Patient pages
-import PatientDashboard from './pages/PatientDashboard';
-import AppointmentBooking from './pages/AppointmentBooking';
-import PatientProfile from './pages/PatientProfile';
-import PatientQueries from './pages/PatientQueries';
-import ResponseSuggestions from './pages/ResponseSuggestions';
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    // Redirect to correct dashboard if role mismatch
+    const roleRoutes = { doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
+    return <Navigate to={roleRoutes[user.role] || '/login'} replace />;
+  }
 
-// Role-based route permissions
-const ROLE_ROUTES = {
-  admin: ['/', '/operations', '/intelligence', '/simulation', '/strategy', '/reports', '/settings', '/admin/users', '/response-suggestions'],
-  doctor: ['/', '/patient-management', '/appointment-management', '/reports', '/response-suggestions'],
-  nurse: ['/', '/patient-vitals', '/register-patient', '/reports', '/response-suggestions'],
-  patient: ['/', '/book-appointment', '/profile', '/reports', '/patient-queries'],
-};
-
-function ProtectedRoute({ user, path, children }) {
-  const allowed = ROLE_ROUTES[user?.role] || [];
-  if (!allowed.includes(path)) return <Navigate to="/" replace />;
   return children;
 }
 
-export default function App() {
-  const [user, setUser] = useState(() => {
-    const saved = sessionStorage.getItem('zi_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+// ─── Public Route (redirects if already logged in) ──────────────
+function PublicRoute({ children }) {
+  const { user, isAuthenticated, loading } = useAuth();
 
-  const handleLogin = (userData) => {
-    setUser(userData);
-    sessionStorage.setItem('zi_user', JSON.stringify(userData));
-  };
+  if (loading) return null;
 
-  const handleLogout = () => {
-    setUser(null);
-    sessionStorage.removeItem('zi_user');
-    sessionStorage.removeItem('zi_token');
-  };
+  if (isAuthenticated) {
+    const roleRoutes = { doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
+    return <Navigate to={roleRoutes[user.role] || '/login'} replace />;
+  }
 
-  if (!user) return <LoginPage onLogin={handleLogin} />;
+  return children;
+}
 
-  // Role-specific dashboard
-  const DashHome = user.role === 'doctor' ? DoctorDashboard
-    : user.role === 'nurse' ? NurseDashboard
-      : user.role === 'patient' ? PatientDashboard
-        : Dashboard;
-
+// ─── App Layout (with sidebar + topbar) ─────────────────────────
+function AppLayout({ children }) {
   return (
-    <div className="min-h-screen bg-surface pb-20">
-      <main className="p-6">
-        <Routes>
-          <Route path="/" element={<DashHome />} />
-
-          {/* Admin */}
-          <Route path="/operations" element={<ProtectedRoute user={user} path="/operations"><Operations /></ProtectedRoute>} />
-          <Route path="/intelligence" element={<ProtectedRoute user={user} path="/intelligence"><Intelligence /></ProtectedRoute>} />
-          <Route path="/simulation" element={<ProtectedRoute user={user} path="/simulation"><SimulationGroup /></ProtectedRoute>} />
-          <Route path="/strategy" element={<ProtectedRoute user={user} path="/strategy"><Strategy /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute user={user} path="/settings"><SettingsPage /></ProtectedRoute>} />
-          <Route path="/admin/users" element={<ProtectedRoute user={user} path="/admin/users"><UserManagement /></ProtectedRoute>} />
-
-          {/* Doctor */}
-          <Route path="/patient-management" element={<ProtectedRoute user={user} path="/patient-management"><PatientManagement /></ProtectedRoute>} />
-          <Route path="/appointment-management" element={<ProtectedRoute user={user} path="/appointment-management"><AppointmentManagement /></ProtectedRoute>} />
-
-          {/* Nurse */}
-          <Route path="/patient-vitals" element={<ProtectedRoute user={user} path="/patient-vitals"><PatientVitals /></ProtectedRoute>} />
-          <Route path="/register-patient" element={<ProtectedRoute user={user} path="/register-patient"><RegisterPatient /></ProtectedRoute>} />
-
-          {/* Patient */}
-          <Route path="/book-appointment" element={<ProtectedRoute user={user} path="/book-appointment"><AppointmentBooking /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute user={user} path="/profile"><PatientProfile /></ProtectedRoute>} />
-          <Route path="/patient-queries" element={<ProtectedRoute user={user} path="/patient-queries"><PatientQueries /></ProtectedRoute>} />
-
-          {/* AI Response Suggestions (Staff) */}
-          <Route path="/response-suggestions" element={<ProtectedRoute user={user} path="/response-suggestions"><ResponseSuggestions /></ProtectedRoute>} />
-
-          {/* Shared */}
-          <Route path="/reports" element={<Reports />} />
-
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-      <Sidebar user={user} onLogout={handleLogout} />
-      <FloatingAssistant />
+    <div style={{ display: 'flex', minHeight: '100vh' }}>
+      <Sidebar />
+      <div style={{
+        flex: 1,
+        marginLeft: 260,
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: '100vh',
+        transition: 'margin-left 0.25s ease',
+      }}>
+        <TopBar />
+        <main style={{ flex: 1, overflow: 'auto' }}>
+          {children}
+        </main>
+      </div>
+      <NotificationToast />
     </div>
   );
 }
+
+// ─── Root Redirect ──────────────────────────────────────────────
+function RootRedirect() {
+  const { user, isAuthenticated, loading } = useAuth();
+
+  if (loading) return null;
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+
+  const roleRoutes = { doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
+  return <Navigate to={roleRoutes[user.role] || '/login'} replace />;
+}
+
+// ─── Main App ───────────────────────────────────────────────────
+function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppProvider>
+          <Routes>
+            {/* Auth Routes (no sidebar) */}
+            <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+            <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+            <Route path="/verify/:userId" element={<VerifyEmail />} />
+
+            {/* Doctor Routes */}
+            <Route path="/doctor" element={
+              <ProtectedRoute allowedRoles={['doctor']}>
+                <AppLayout><DoctorDashboard /></AppLayout>
+              </ProtectedRoute>
+            } />
+
+            {/* Nurse Routes */}
+            <Route path="/nurse" element={
+              <ProtectedRoute allowedRoles={['nurse']}>
+                <AppLayout><NurseDashboard /></AppLayout>
+              </ProtectedRoute>
+            } />
+
+            {/* Patient Routes */}
+            <Route path="/patient" element={
+              <ProtectedRoute allowedRoles={['patient']}>
+                <AppLayout><PatientDashboard /></AppLayout>
+              </ProtectedRoute>
+            } />
+
+            {/* Root */}
+            <Route path="/" element={<RootRedirect />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </AppProvider>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}
+
+export default App;

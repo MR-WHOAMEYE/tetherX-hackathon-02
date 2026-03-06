@@ -1,125 +1,92 @@
-import axios from 'axios';
+// ===== Backend API Client =====
+// Centralized HTTP client for all backend API calls
 
-// In production, set VITE_API_URL to your deployed backend (e.g. https://your-backend.onrender.com/api)
-// In dev, defaults to '/api' which uses Vite proxy to localhost:8000
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = '/api';
 
-const api = axios.create({
-    baseURL: API_BASE,
-    timeout: 60000,
-});
-
-api.interceptors.response.use(
-    response => response.data,
-    error => {
-        console.error('API Error:', error);
-        return Promise.reject(error);
+const getToken = () => {
+    const session = localStorage.getItem('tetherx_session');
+    if (session) {
+        try { return JSON.parse(session).token; } catch { return null; }
     }
-);
+    return null;
+};
 
-// Dashboard
-export const getDashboardSummary = () => api.get('/dashboard/summary');
+const headers = (extra = {}) => {
+    const h = { 'Content-Type': 'application/json', ...extra };
+    const token = getToken();
+    if (token) h['Authorization'] = `Bearer ${token}`;
+    return h;
+};
 
-// Workload
-export const getDeptWorkload = () => api.get('/workload/department');
-export const getStaffWorkload = () => api.get('/workload/staff');
-export const getHourlyHeatmap = () => api.get('/workload/hourly-heatmap');
-export const getWeeklyTrend = () => api.get('/workload/weekly-trend');
-
-// SLA
-export const getResolutionTrend = () => api.get('/sla/resolution-trend');
-export const getDelayedPercentage = () => api.get('/sla/delayed-percentage');
-export const getViolationRisk = () => api.get('/sla/violation-risk');
-export const getDeptEfficiency = () => api.get('/sla/department-efficiency');
-
-// Predictive
-export const getWorkloadForecast = () => api.get('/predictive/forecast');
-export const getBurnoutPrediction = () => api.get('/predictive/burnout');
-export const getSurgeDetection = () => api.get('/predictive/surge');
-
-// Root Cause
-export const getRootCause = () => api.get('/root-cause/analysis');
-
-// Digital Twin
-export const getDigitalTwinState = () => api.get('/digital-twin/state');
-
-// Simulation
-export const runSimulation = (params) => api.post('/simulation/run', params);
-
-// Optimization
-export const getOptimization = () => api.get('/optimization/recommend');
-
-// Sentiment
-export const getSentiment = () => api.get('/sentiment/analysis');
-
-// Alerts
-export const getAlerts = () => api.get('/alerts/active');
-
-// Strategic
-export const simulateScenario = (params) => api.post('/strategic/simulate', params);
-
-// Financial
-export const getFinancialImpact = () => api.get('/financial/impact');
-export const simulateROI = (params) => api.post('/financial/simulate-roi', params);
-
-// Assistant
-export const queryAssistant = (query, history = []) => api.post('/assistant/query', { query, history });
-
-// Reports
-export const getReport = () => api.get('/reports/generate');
-
-// Auth
-const authApi = axios.create({
-    baseURL: API_BASE,
-    timeout: 15000,
-});
-
-authApi.interceptors.response.use(
-    response => response.data,
-    error => {
-        console.error('Auth API Error:', error);
-        return Promise.reject(error);
+const handleRes = async (res) => {
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const err = new Error(body.detail || `API error ${res.status}`);
+        err.status = res.status;
+        throw err;
     }
-);
+    return res.json();
+};
 
-export const loginUser = (email, password) =>
-    authApi.post('/auth/login', { email, password });
-
-export const registerUser = (userData, token) =>
-    authApi.post('/auth/register', userData, {
-        headers: { Authorization: `Bearer ${token}` }
+const get = (path, params = {}) => {
+    const url = new URL(`${API_BASE}${path}`, window.location.origin);
+    Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
     });
+    return fetch(url.toString(), { headers: headers() }).then(handleRes);
+};
 
-export const getUsers = (token) =>
-    authApi.get('/auth/users', {
-        headers: { Authorization: `Bearer ${token}` }
-    });
+const post = (path, body = {}) =>
+    fetch(`${API_BASE}${path}`, { method: 'POST', headers: headers(), body: JSON.stringify(body) }).then(handleRes);
 
-export const deleteUser = (userId, token) =>
-    authApi.delete(`/auth/users/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-    });
+const put = (path, body = {}) =>
+    fetch(`${API_BASE}${path}`, { method: 'PUT', headers: headers(), body: JSON.stringify(body) }).then(handleRes);
 
-export const getDoctors = (department) =>
-    authApi.get('/auth/doctor-list', { params: department ? { department } : {} });
+const del = (path) =>
+    fetch(`${API_BASE}${path}`, { method: 'DELETE', headers: headers() }).then(handleRes);
 
-export const getNotifications = (doctorEmail, unreadOnly = false) =>
-    authApi.get('/auth/notifications', { params: { doctor_email: doctorEmail, unread_only: unreadOnly } });
+// ── Auth ──────────────────────────────────────────
+export const apiLogin = (email, password) => post('/auth/login', { email, password });
+export const apiRegister = (data) => post('/auth/register', data);
+export const apiGetMe = () => get('/auth/me');
+export const apiListUsers = () => get('/auth/users');
+export const apiListDoctors = (department) => get('/auth/doctor-list', { department });
+export const apiGetNotifications = (doctorEmail, unreadOnly) => get('/auth/notifications', { doctor_email: doctorEmail, unread_only: unreadOnly });
+export const apiMarkNotificationRead = (notifId) => put(`/auth/notifications/${notifId}/read`);
 
-export const markNotificationRead = (notifId) =>
-    authApi.put(`/auth/notifications/${notifId}/read`);
+// ── Patient ───────────────────────────────────────
+export const apiGetMyPrescriptions = (email) => get('/patient/my-prescriptions', { patient_email: email });
+export const apiGetMyDiagnoses = (email) => get('/patient/my-diagnoses', { patient_email: email });
+export const apiGetMyVitals = (email) => get('/patient/my-vitals', { patient_email: email });
+export const apiGetMyBookings = (email) => get('/patient/bookings', { patient_email: email });
+export const apiCreateBooking = (data) => post('/patient/bookings', data);
+export const apiGetPatientProfile = (email) => get('/patient/profile', { email });
+export const apiUpdatePatientProfile = (email, data) => put(`/patient/profile?email=${encodeURIComponent(email)}`, data);
+export const apiSubmitFeedback = (data) => post('/patient/feedback', data);
 
-// Response Suggestions (AI-Based)
-export const submitPatientQuery = (data) => api.post('/response-suggestions/queries', data);
-export const getPatientQueries = (params = {}) => api.get('/response-suggestions/queries', { params });
-export const getPatientQuery = (id) => api.get(`/response-suggestions/queries/${id}`);
-export const generateDraft = (queryId) => api.post(`/response-suggestions/queries/${queryId}/generate-draft`);
-export const getDrafts = (params = {}) => api.get('/response-suggestions/drafts', { params });
-export const getDraft = (draftId) => api.get(`/response-suggestions/drafts/${draftId}`);
-export const reviewDraft = (draftId, data) => api.put(`/response-suggestions/drafts/${draftId}/review`, data);
-export const sendDraftResponse = (draftId, data = {}) => api.post(`/response-suggestions/drafts/${draftId}/send`, data);
-export const getKnowledgeArticles = (params = {}) => api.get('/response-suggestions/knowledge', { params });
-export const addKnowledgeArticle = (data) => api.post('/response-suggestions/knowledge', data);
-export const getResponseStats = () => api.get('/response-suggestions/stats');
+// ── Doctor ────────────────────────────────────────
+export const apiDoctorDashboard = (department, staffId) => get('/doctor/dashboard', { department, staff_id: staffId });
+export const apiGetMyPatients = (doctorEmail) => get('/doctor/my-patients', { doctor_email: doctorEmail });
+export const apiAddPrescription = (data) => post('/doctor/prescriptions', data);
+export const apiGetPrescriptions = (patientEmail) => get('/doctor/prescriptions', { patient_email: patientEmail });
+export const apiAddDiagnosis = (data) => post('/doctor/diagnoses', data);
+export const apiGetDiagnoses = (patientEmail) => get('/doctor/diagnoses', { patient_email: patientEmail });
+export const apiGetDoctorBookings = (department, status) => get('/doctor/bookings', { department, status });
+export const apiUpdateBooking = (bookingId, data) => put(`/doctor/bookings/${bookingId}`, data);
 
-export default api;
+// ── Nurse ─────────────────────────────────────────
+export const apiNurseDashboard = (department, nurseEmail) => get('/nurse/dashboard', { department, nurse_email: nurseEmail });
+export const apiRecordVitals = (data) => post('/nurse/vitals', data);
+export const apiGetVitals = (patientEmail) => get('/nurse/vitals', { patient_email: patientEmail });
+
+// ── Response Suggestions (AI Pipeline) ────────────
+export const apiSubmitPatientQuery = (data) => post('/response-suggestions/queries', data);
+export const apiGetPatientQueries = (params = {}) => get('/response-suggestions/queries', params);
+export const apiGenerateDraft = (queryId) => post(`/response-suggestions/queries/${queryId}/generate-draft`);
+export const apiGetDrafts = (status) => get('/response-suggestions/drafts', { status });
+export const apiReviewDraft = (draftId, data) => put(`/response-suggestions/drafts/${draftId}/review`, data);
+export const apiSendDraft = (draftId, data = {}) => post(`/response-suggestions/drafts/${draftId}/send`, data);
+export const apiGetResponseStats = () => get('/response-suggestions/stats');
+
+// ── Dashboard ─────────────────────────────────────
+export const apiDashboardSummary = () => get('/dashboard/summary');
