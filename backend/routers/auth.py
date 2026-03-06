@@ -32,12 +32,17 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
 class RegisterRequest(BaseModel):
     name: str
     email: str
     password: Optional[str] = None
     role: str  # admin, doctor, nurse, patient
     department: Optional[str] = None
+    specialization: Optional[str] = None       # doctor/nurse specialization
     assigned_doctor: Optional[str] = None      # doctor email
     assigned_doctor_name: Optional[str] = None # doctor display name
     issue: Optional[str] = None                # patient issue / reason
@@ -208,6 +213,27 @@ def login(request: LoginRequest):
         }
     }
 
+@router.put("/change-password")
+def change_password(request: ChangePasswordRequest, current_user: dict = Depends(_get_current_user)):
+    if users_collection is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    user = users_collection.find_one({"email": current_user["email"]})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not _verify_password(request.current_password, user["password"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    if len(request.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+
+    users_collection.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password": _hash_password(request.new_password)}}
+    )
+    return {"message": "Password changed successfully"}
+
 @router.post("/register")
 def register(request: RegisterRequest, current_user: dict = Depends(_get_current_user)):
     if users_collection is None:
@@ -239,6 +265,29 @@ def register(request: RegisterRequest, current_user: dict = Depends(_get_current
         "created_at": datetime.utcnow().isoformat(),
         "created_by": current_user["email"],
     }
+
+    # Auto-increment License No. for doctors
+    if request.role == "doctor":
+        last_doc = users_collection.find_one(
+            {"role": "doctor", "license_no": {"$exists": True}},
+            sort=[("license_no", -1)]
+        )
+        next_num = (last_doc["license_no"] + 1) if last_doc else 1001
+        user_doc["license_no"] = next_num
+        if request.specialization:
+            user_doc["specialization"] = request.specialization
+
+    # Auto-increment Nursing ID for nurses
+    if request.role == "nurse":
+        last_doc = users_collection.find_one(
+            {"role": "nurse", "nursing_id": {"$exists": True}},
+            sort=[("nursing_id", -1)]
+        )
+        next_num = (last_doc["nursing_id"] + 1) if last_doc else 5001
+        user_doc["nursing_id"] = next_num
+        if request.specialization:
+            user_doc["specialization"] = request.specialization
+
     # Store patient-specific fields
     if request.assigned_doctor:
         user_doc["assigned_doctor"] = request.assigned_doctor
@@ -276,6 +325,9 @@ def register(request: RegisterRequest, current_user: dict = Depends(_get_current
             "email": request.email,
             "role": request.role,
             "department": request.department,
+            "specialization": user_doc.get("specialization", ""),
+            "license_no": user_doc.get("license_no"),
+            "nursing_id": user_doc.get("nursing_id"),
             "assigned_doctor": request.assigned_doctor,
             "assigned_doctor_name": request.assigned_doctor_name,
             "issue": request.issue,

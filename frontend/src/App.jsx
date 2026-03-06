@@ -7,6 +7,7 @@ import NotificationToast from './components/NotificationToast';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import VerifyEmail from './pages/VerifyEmail';
+import AdminDashboard from './pages/admin/AdminDashboard';
 import DoctorDashboard from './pages/doctor/DoctorDashboard';
 import NurseDashboard from './pages/nurse/NurseDashboard';
 import PatientDashboard from './pages/patient/PatientDashboard';
@@ -35,7 +36,7 @@ function ProtectedRoute({ children, allowedRoles }) {
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     // Redirect to correct dashboard if role mismatch
-    const roleRoutes = { doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
+    const roleRoutes = { admin: '/admin', doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
     return <Navigate to={roleRoutes[user.role] || '/login'} replace />;
   }
 
@@ -49,7 +50,7 @@ function PublicRoute({ children }) {
   if (loading) return null;
 
   if (isAuthenticated) {
-    const roleRoutes = { doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
+    const roleRoutes = { admin: '/admin', doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
     return <Navigate to={roleRoutes[user.role] || '/login'} replace />;
   }
 
@@ -87,7 +88,7 @@ function RootRedirect() {
 
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
-  const roleRoutes = { doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
+  const roleRoutes = { admin: '/admin', doctor: '/doctor', nurse: '/nurse', patient: '/patient' };
   return <Navigate to={roleRoutes[user.role] || '/login'} replace />;
 }
 
@@ -102,6 +103,13 @@ function App() {
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
             <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
             <Route path="/verify/:userId" element={<VerifyEmail />} />
+
+            {/* Admin Routes */}
+            <Route path="/admin" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AppLayout><AdminDashboard /></AppLayout>
+              </ProtectedRoute>
+            } />
 
             {/* Doctor Routes */}
             <Route path="/doctor" element={

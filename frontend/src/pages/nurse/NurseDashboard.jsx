@@ -1,23 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
     Users, UserPlus, Activity, Bell, Search, CheckCircle,
-    ChevronDown, ChevronUp, Mail, AlertCircle,
-    Thermometer, Heart, Droplets, Wind, Brain, Send, MessageSquare, Loader2
+    ChevronDown, ChevronUp, Mail, Phone, ShieldCheck, AlertCircle,
+    Thermometer, Heart, Droplets, Wind, Scale, Brain, Send, MessageSquare
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import {
-    apiRegister, apiListUsers, apiRecordVitals, apiGetVitals,
-    apiGetDrafts, apiReviewDraft, apiSendDraft, apiListDoctors,
-} from '../../services/api';
+import { useApp } from '../../context/AppContext';
+import HeroBanner from '../../components/HeroBanner';
 
 // ═══ SUB-TAB: Patient List ══════════════════════════════════════
-function PatientList({ patients }) {
+function PatientList({ patients, getPatientVitals }) {
     const [search, setSearch] = useState('');
     const [expandedId, setExpandedId] = useState(null);
 
-    const filtered = patients.filter(p =>
-        (p.name || '').toLowerCase().includes(search.toLowerCase()) || (p.email || '').includes(search)
-    );
+    const filtered = patients.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.id.includes(search));
 
     return (
         <div>
@@ -30,22 +27,29 @@ function PatientList({ patients }) {
 
             {filtered.map(patient => {
                 const isExpanded = expandedId === patient.id;
+                const patientVitals = getPatientVitals(patient.id);
+                const latestVitals = patientVitals[0];
 
                 return (
                     <div key={patient.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: 0, overflow: 'hidden' }}>
                         <div onClick={() => setExpandedId(isExpanded ? null : patient.id)} style={{ padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '1rem', cursor: 'pointer' }}>
                             <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'linear-gradient(135deg, #0d9488, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, flexShrink: 0 }}>
-                                {(patient.name || '?').charAt(0)}
+                                {patient.name.charAt(0)}
                             </div>
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>{patient.name}</div>
+                                <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>
+                                    {patient.name}
+                                    {patient.verified ? <ShieldCheck size={14} color="#10b981" style={{ marginLeft: 6, verticalAlign: -2 }} /> : <span className="badge badge-warning" style={{ marginLeft: 8, fontSize: '0.5625rem' }}>Unverified</span>}
+                                </div>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
-                                    {patient.email} · {patient.department || 'General'}
+                                    {patient.id} · {patient.age}y · {patient.gender} · {patient.bloodGroup}
                                 </div>
                             </div>
-                            {patient.issue && (
-                                <span className="badge badge-primary" style={{ fontSize: '0.625rem' }}>{patient.issue}</span>
-                            )}
+                            <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+                                {patient.conditions.slice(0, 2).map(c => (
+                                    <span key={c} className="badge badge-primary" style={{ fontSize: '0.625rem' }}>{c}</span>
+                                ))}
+                            </div>
                             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                         </div>
 
@@ -57,14 +61,42 @@ function PatientList({ patients }) {
                                         <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginTop: '0.125rem' }}>{patient.email}</div>
                                     </div>
                                     <div style={{ padding: '0.75rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
-                                        <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Department</div>
-                                        <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginTop: '0.125rem' }}>{patient.department || 'General'}</div>
+                                        <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Phone size={10} /> Phone</div>
+                                        <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginTop: '0.125rem' }}>{patient.phone}</div>
                                     </div>
                                     <div style={{ padding: '0.75rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
-                                        <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Created</div>
-                                        <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginTop: '0.125rem' }}>{patient.created_at ? new Date(patient.created_at).toLocaleDateString() : 'N/A'}</div>
+                                        <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Address</div>
+                                        <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginTop: '0.125rem' }}>{patient.address}</div>
                                     </div>
                                 </div>
+
+                                {patient.allergies.length > 0 && (
+                                    <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 'var(--radius-sm)' }}>
+                                        <span style={{ fontSize: '0.6875rem', color: '#f87171', fontWeight: 600 }}>⚠ Allergies: </span>
+                                        <span style={{ fontSize: '0.8125rem', color: '#fca5a5' }}>{patient.allergies.join(', ')}</span>
+                                    </div>
+                                )}
+
+                                {latestVitals && (
+                                    <div style={{ marginTop: '0.75rem' }}>
+                                        <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.375rem' }}>
+                                            Latest Vitals — {new Date(latestVitals.recordedAt).toLocaleDateString()}
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.375rem' }}>
+                                            {[
+                                                { l: 'Temp', v: `${latestVitals.temperature}°F` },
+                                                { l: 'BP', v: `${latestVitals.bloodPressureSystolic}/${latestVitals.bloodPressureDiastolic}` },
+                                                { l: 'HR', v: `${latestVitals.heartRate} bpm` },
+                                                { l: 'SpO2', v: `${latestVitals.oxygenSaturation}%` },
+                                            ].map(item => (
+                                                <div key={item.l} style={{ padding: '0.375rem', background: 'var(--color-bg-primary)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '0.5625rem', color: 'var(--color-text-muted)' }}>{item.l}</div>
+                                                    <div style={{ fontSize: '0.875rem', fontWeight: 700 }}>{item.v}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -79,58 +111,93 @@ function PatientList({ patients }) {
 }
 
 // ═══ SUB-TAB: Register New Patient ══════════════════════════════
-function RegisterPatient({ nurseEmail, doctors, onSuccess }) {
+function RegisterPatient({ registerPatient, nurseId, verifyPatient }) {
     const [form, setForm] = useState({
-        name: '', email: '', department: '', issue: '', assignedDoctor: '',
+        name: '', email: '', phone: '', age: '', gender: 'Male', dateOfBirth: '',
+        bloodGroup: 'O+', address: '', emergencyContact: '', conditions: '', allergies: '',
     });
-    const [success, setSuccess] = useState(false);
-    const [error, setError] = useState('');
-    const [submitting, setSubmitting] = useState(false);
+    const [step, setStep] = useState('form'); // form, verify, done
+    const [registeredPatient, setRegisteredPatient] = useState(null);
+    const [verifyCode] = useState(() => Math.floor(100000 + Math.random() * 900000).toString());
+    const [enteredCode, setEnteredCode] = useState('');
+    const [verifyError, setVerifyError] = useState('');
 
     const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-    const handleSubmit = async (e) => {
+    const handleSubmit = (e) => {
         e.preventDefault();
-        if (!form.name || !form.email) return;
-        setSubmitting(true);
-        setError('');
-
-        const selectedDoc = doctors.find(d => d.email === form.assignedDoctor);
-
-        try {
-            await apiRegister({
-                name: form.name,
-                email: form.email,
-                role: 'patient',
-                department: form.department || 'General',
-                assigned_doctor: form.assignedDoctor || undefined,
-                assigned_doctor_name: selectedDoc?.name || undefined,
-                issue: form.issue || undefined,
-            });
-            setForm({ name: '', email: '', department: '', issue: '', assignedDoctor: '' });
-            setSuccess(true);
-            setTimeout(() => setSuccess(false), 4000);
-            onSuccess?.();
-        } catch (err) {
-            setError(err?.message || 'Failed to register patient');
-        }
-        setSubmitting(false);
+        if (!form.name || !form.email || !form.phone || !form.age) return;
+        const patient = registerPatient(form, nurseId);
+        setRegisteredPatient(patient);
+        setStep('verify');
     };
+
+    const handleVerify = () => {
+        if (enteredCode === verifyCode) {
+            verifyPatient(registeredPatient.id);
+            setStep('done');
+        } else {
+            setVerifyError('Invalid verification code. Please try again.');
+        }
+    };
+
+    if (step === 'done') {
+        return (
+            <div style={{ textAlign: 'center', padding: '3rem' }}>
+                <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
+                    <CheckCircle size={36} color="#10b981" />
+                </div>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>Patient Registered & Verified</h2>
+                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>{registeredPatient.name} — {registeredPatient.id}</p>
+                <p style={{ color: 'var(--color-text-tertiary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>Confirmation sent to {registeredPatient.email}</p>
+                <button className="btn btn-primary" onClick={() => { setStep('form'); setForm({ name: '', email: '', phone: '', age: '', gender: 'Male', dateOfBirth: '', bloodGroup: 'O+', address: '', emergencyContact: '', conditions: '', allergies: '' }); setRegisteredPatient(null); setEnteredCode(''); }}>
+                    <UserPlus size={16} /> Register Another Patient
+                </button>
+            </div>
+        );
+    }
+
+    if (step === 'verify') {
+        return (
+            <div style={{ maxWidth: 480, margin: '0 auto' }}>
+                <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+                    <ShieldCheck size={40} color="var(--color-accent)" style={{ marginBottom: '0.75rem' }} />
+                    <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Verify Patient's Email</h3>
+                    <p style={{ color: 'var(--color-text-tertiary)', fontSize: '0.875rem' }}>
+                        Verification code sent to <strong>{registeredPatient.email}</strong>
+                    </p>
+                </div>
+
+                <div style={{ padding: '1rem', marginBottom: '1.5rem', background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: '0.375rem' }}>Simulated Email — Verification Code</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 800, fontFamily: 'var(--font-mono)', letterSpacing: '0.3em', color: 'var(--color-accent-light)' }}>
+                        {verifyCode}
+                    </div>
+                    <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>(In production, this would arrive in the patient's email)</div>
+                </div>
+
+                {verifyError && (
+                    <div style={{ padding: '0.75rem', marginBottom: '1rem', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-md)', color: '#f87171', fontSize: '0.8125rem' }}>{verifyError}</div>
+                )}
+
+                <div style={{ marginBottom: '1.25rem' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Enter 6-digit Code</label>
+                    <input className="input" type="text" maxLength={6} placeholder="000000" value={enteredCode} onChange={e => setEnteredCode(e.target.value.replace(/\D/g, ''))} style={{ textAlign: 'center', fontSize: '1.5rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.25em', fontWeight: 700 }} />
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button className="btn btn-secondary" onClick={() => setStep('form')} style={{ flex: 1 }}>← Back</button>
+                    <button className="btn btn-primary" onClick={handleVerify} disabled={enteredCode.length !== 6} style={{ flex: 2 }}>
+                        <ShieldCheck size={16} /> Verify & Complete
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <form onSubmit={handleSubmit}>
-            {success && (
-                <div className="animate-fade-in" style={{ padding: '0.75rem 1rem', marginBottom: '1rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 'var(--radius-md)', color: '#059669', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <CheckCircle size={16} /> Patient registered successfully! Default password: patient123
-                </div>
-            )}
-            {error && (
-                <div style={{ padding: '0.75rem 1rem', marginBottom: '1rem', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-md)', color: '#ef4444', fontSize: '0.8125rem' }}>
-                    {error}
-                </div>
-            )}
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                 <div>
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Full Name *</label>
                     <input className="input" placeholder="Patient full name" value={form.name} onChange={e => handleChange('name', e.target.value)} required />
@@ -139,71 +206,83 @@ function RegisterPatient({ nurseEmail, doctors, onSuccess }) {
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Email Address *</label>
                     <input className="input" type="email" placeholder="patient@email.com" value={form.email} onChange={e => handleChange('email', e.target.value)} required />
                 </div>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Phone Number *</label>
+                    <input className="input" placeholder="+91-XXXXX-XXXXX" value={form.phone} onChange={e => handleChange('phone', e.target.value)} required />
+                </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                 <div>
-                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Department</label>
-                    <input className="input" placeholder="e.g. Cardiology" value={form.department} onChange={e => handleChange('department', e.target.value)} />
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Age *</label>
+                    <input className="input" type="number" min="0" max="150" placeholder="Age" value={form.age} onChange={e => handleChange('age', e.target.value)} required />
                 </div>
                 <div>
-                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Issue / Condition</label>
-                    <input className="input" placeholder="e.g. Chest pain, Diabetes" value={form.issue} onChange={e => handleChange('issue', e.target.value)} />
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Gender</label>
+                    <select className="input" value={form.gender} onChange={e => handleChange('gender', e.target.value)}>
+                        <option>Male</option><option>Female</option><option>Other</option>
+                    </select>
                 </div>
                 <div>
-                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Assign Doctor</label>
-                    <select className="input" value={form.assignedDoctor} onChange={e => handleChange('assignedDoctor', e.target.value)}>
-                        <option value="">Unassigned</option>
-                        {doctors.map(d => <option key={d.email} value={d.email}>{d.name} ({d.department || 'General'})</option>)}
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Date of Birth</label>
+                    <input className="input" type="date" value={form.dateOfBirth} onChange={e => handleChange('dateOfBirth', e.target.value)} />
+                </div>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Blood Group</label>
+                    <select className="input" value={form.bloodGroup} onChange={e => handleChange('bloodGroup', e.target.value)}>
+                        {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => <option key={bg} value={bg}>{bg}</option>)}
                     </select>
                 </div>
             </div>
 
-            <button type="submit" className="btn btn-primary" style={{ minWidth: 220 }} disabled={submitting}>
-                {submitting ? <><Loader2 size={16} className="spin" /> Registering...</> : <><UserPlus size={16} /> Register Patient</>}
+            <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Address</label>
+                <input className="input" placeholder="Full address..." value={form.address} onChange={e => handleChange('address', e.target.value)} />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Emergency Contact</label>
+                    <input className="input" placeholder="+91-XXXXX-XXXXX" value={form.emergencyContact} onChange={e => handleChange('emergencyContact', e.target.value)} />
+                </div>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Allergies (comma-separated)</label>
+                    <input className="input" placeholder="e.g. Penicillin, Aspirin" value={form.allergies} onChange={e => handleChange('allergies', e.target.value)} />
+                </div>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Known Conditions (comma-separated)</label>
+                <input className="input" placeholder="e.g. Diabetes, Hypertension" value={form.conditions} onChange={e => handleChange('conditions', e.target.value)} />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ minWidth: 220 }}>
+                <UserPlus size={16} /> Register Patient & Verify Email
             </button>
         </form>
     );
 }
 
 // ═══ SUB-TAB: Record Vitals ═════════════════════════════════════
-function RecordVitals({ patients, onSuccess }) {
+function RecordVitals({ patients, recordVitals, nurseId }) {
     const [selectedPatient, setSelectedPatient] = useState('');
     const [form, setForm] = useState({
-        bp_systolic: '', bp_diastolic: '', sugar_level: '',
-        temperature: '', heart_rate: '', notes: '',
+        temperature: '', bloodPressureSystolic: '', bloodPressureDiastolic: '',
+        heartRate: '', respiratoryRate: '', oxygenSaturation: '', weight: '', height: '',
+        bloodSugarFasting: '', bloodSugarPP: '', notes: '',
     });
     const [success, setSuccess] = useState(false);
-    const [submitting, setSubmitting] = useState(false);
 
     const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-    const handleSubmit = async (e) => {
+    const handleSubmit = (e) => {
         e.preventDefault();
         if (!selectedPatient) return;
-        setSubmitting(true);
-
-        const patient = patients.find(p => p.email === selectedPatient);
-        try {
-            await apiRecordVitals({
-                patient_email: selectedPatient,
-                patient_name: patient?.name || '',
-                bp_systolic: form.bp_systolic ? Number(form.bp_systolic) : null,
-                bp_diastolic: form.bp_diastolic ? Number(form.bp_diastolic) : null,
-                sugar_level: form.sugar_level ? Number(form.sugar_level) : null,
-                temperature: form.temperature ? Number(form.temperature) : null,
-                heart_rate: form.heart_rate ? Number(form.heart_rate) : null,
-                notes: form.notes,
-            });
-            setSelectedPatient('');
-            setForm({ bp_systolic: '', bp_diastolic: '', sugar_level: '', temperature: '', heart_rate: '', notes: '' });
-            setSuccess(true);
-            setTimeout(() => setSuccess(false), 3000);
-            onSuccess?.();
-        } catch (err) {
-            console.error('Failed to record vitals:', err);
-        }
-        setSubmitting(false);
+        recordVitals({ ...form, patientId: selectedPatient }, nurseId);
+        setSelectedPatient('');
+        setForm({ temperature: '', bloodPressureSystolic: '', bloodPressureDiastolic: '', heartRate: '', respiratoryRate: '', oxygenSaturation: '', weight: '', height: '', bloodSugarFasting: '', bloodSugarPP: '', notes: '' });
+        setSuccess(true);
+        setTimeout(() => setSuccess(false), 3000);
     };
 
     return (
@@ -218,16 +297,16 @@ function RecordVitals({ patients, onSuccess }) {
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Select Patient *</label>
                 <select className="input" value={selectedPatient} onChange={e => setSelectedPatient(e.target.value)} required style={{ maxWidth: 400 }}>
                     <option value="">Choose patient...</option>
-                    {patients.map(p => <option key={p.id || p.email} value={p.email}>{p.name} ({p.email})</option>)}
+                    {patients.map(p => <option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
                 </select>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
                 {[
                     { field: 'temperature', label: 'Temperature (°F)', icon: Thermometer, placeholder: '98.6' },
-                    { field: 'heart_rate', label: 'Heart Rate (bpm)', icon: Heart, placeholder: '72' },
-                    { field: 'bp_systolic', label: 'BP Systolic (mmHg)', icon: Droplets, placeholder: '120' },
-                    { field: 'bp_diastolic', label: 'BP Diastolic (mmHg)', icon: Wind, placeholder: '80' },
+                    { field: 'heartRate', label: 'Heart Rate (bpm)', icon: Heart, placeholder: '72' },
+                    { field: 'oxygenSaturation', label: 'SpO2 (%)', icon: Droplets, placeholder: '98' },
+                    { field: 'respiratoryRate', label: 'Resp. Rate (/min)', icon: Wind, placeholder: '16' },
                 ].map(item => (
                     <div key={item.field}>
                         <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>{item.label}</label>
@@ -236,123 +315,45 @@ function RecordVitals({ patients, onSuccess }) {
                 ))}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
                 <div>
-                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Blood Sugar (mg/dL)</label>
-                    <input className="input" type="number" placeholder="100" value={form.sugar_level} onChange={e => handleChange('sugar_level', e.target.value)} />
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>BP Systolic (mmHg)</label>
+                    <input className="input" type="number" placeholder="120" value={form.bloodPressureSystolic} onChange={e => handleChange('bloodPressureSystolic', e.target.value)} />
                 </div>
                 <div>
-                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Notes / Observations</label>
-                    <input className="input" placeholder="Additional observations..." value={form.notes} onChange={e => handleChange('notes', e.target.value)} />
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>BP Diastolic (mmHg)</label>
+                    <input className="input" type="number" placeholder="80" value={form.bloodPressureDiastolic} onChange={e => handleChange('bloodPressureDiastolic', e.target.value)} />
+                </div>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Weight (kg)</label>
+                    <input className="input" type="number" step="0.1" placeholder="70" value={form.weight} onChange={e => handleChange('weight', e.target.value)} />
+                </div>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Height (cm)</label>
+                    <input className="input" type="number" placeholder="170" value={form.height} onChange={e => handleChange('height', e.target.value)} />
                 </div>
             </div>
 
-            <button type="submit" className="btn btn-primary" style={{ minWidth: 200 }} disabled={submitting}>
-                {submitting ? <><Loader2 size={16} className="spin" /> Saving...</> : <><Activity size={16} /> Save Vitals</>}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Blood Sugar — Fasting (mg/dL)</label>
+                    <input className="input" type="number" placeholder="100" value={form.bloodSugarFasting} onChange={e => handleChange('bloodSugarFasting', e.target.value)} />
+                </div>
+                <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Blood Sugar — Post Prandial (mg/dL)</label>
+                    <input className="input" type="number" placeholder="140" value={form.bloodSugarPP} onChange={e => handleChange('bloodSugarPP', e.target.value)} />
+                </div>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '0.25rem' }}>Notes / Observations</label>
+                <textarea className="input" rows={3} placeholder="Additional observations..." value={form.notes} onChange={e => handleChange('notes', e.target.value)} />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ minWidth: 200 }}>
+                <Activity size={16} /> Save Vitals
             </button>
         </form>
-    );
-}
-
-
-// ═══ SUB-TAB: Nurse Notifications ═══════════════════════════════
-function NurseNotifications({ drafts, nurseEmail, onRefresh }) {
-    const [expandedQ, setExpandedQ] = useState(null);
-    const [responseText, setResponseText] = useState('');
-    const [sending, setSending] = useState(false);
-
-    const pendingDrafts = drafts.filter(d => d.status === 'ai_generated' || d.status === 'pending');
-
-    const handleApproveAndSend = async (draftId) => {
-        setSending(true);
-        try {
-            await apiReviewDraft(draftId, { action: 'approve', staff_email: nurseEmail, staff_notes: 'Approved by nurse' });
-            await apiSendDraft(draftId, { staff_email: nurseEmail });
-            setExpandedQ(null);
-            setResponseText('');
-            onRefresh?.();
-        } catch (err) {
-            console.error('Send failed:', err);
-        }
-        setSending(false);
-    };
-
-    const handleEditAndSend = async (draftId) => {
-        if (!responseText.trim()) return;
-        setSending(true);
-        try {
-            await apiReviewDraft(draftId, { action: 'edit_and_approve', edited_text: responseText, staff_email: nurseEmail, staff_notes: 'Edited by nurse' });
-            await apiSendDraft(draftId, { staff_email: nurseEmail });
-            setExpandedQ(null);
-            setResponseText('');
-            onRefresh?.();
-        } catch (err) {
-            console.error('Edit failed:', err);
-        }
-        setSending(false);
-    };
-
-    return (
-        <div>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <AlertCircle size={16} color="#f59e0b" /> Pending Patient Questions ({pendingDrafts.length})
-            </h3>
-
-            {pendingDrafts.map(draft => {
-                const isExpanded = expandedQ === draft.id;
-
-                return (
-                    <div key={draft.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: 0, overflow: 'hidden', borderLeft: '4px solid #f59e0b' }}>
-                        <div onClick={() => { setExpandedQ(isExpanded ? null : draft.id); setResponseText(''); }} style={{ padding: '1rem 1.25rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg, #0d9488, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, flexShrink: 0 }}>
-                                {(draft.patient_name || '?').charAt(0)}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{draft.patient_name}</div>
-                                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 400 }}>
-                                    {draft.query_subject || draft.query_message?.slice(0, 80)}
-                                </div>
-                            </div>
-                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                        </div>
-
-                        {isExpanded && (
-                            <div className="animate-fade-in" style={{ padding: '0 1.25rem 1.25rem', borderTop: '1px solid var(--color-border-light)' }}>
-                                <div style={{ padding: '0.75rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', margin: '0.75rem 0' }}>
-                                    <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Question</div>
-                                    <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>{draft.query_message}</div>
-                                </div>
-
-                                <div style={{ padding: '0.75rem', background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)', borderRadius: 'var(--radius-md)', marginBottom: '0.75rem' }}>
-                                    <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-accent)', textTransform: 'uppercase', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                        <Brain size={12} /> AI Generated Draft
-                                    </div>
-                                    <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{draft.draft_text}</div>
-                                </div>
-
-                                <textarea className="input" rows={3} placeholder="Edit response or leave blank to send AI draft..." value={responseText} onChange={e => setResponseText(e.target.value)} style={{ marginBottom: '0.75rem' }} />
-
-                                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                                    <button className="btn btn-secondary" onClick={() => handleApproveAndSend(draft.id)} disabled={sending}>
-                                        <Brain size={14} /> Approve & Send AI Draft
-                                    </button>
-                                    <button className="btn btn-primary" onClick={() => handleEditAndSend(draft.id)} disabled={!responseText.trim() || sending}>
-                                        <Send size={14} /> Send Edited Response
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                );
-            })}
-
-            {pendingDrafts.length === 0 && (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
-                    <CheckCircle size={36} color="var(--color-success)" style={{ marginBottom: '0.5rem' }} />
-                    <p>No pending questions</p>
-                </div>
-            )}
-        </div>
     );
 }
 
@@ -360,36 +361,20 @@ function NurseNotifications({ drafts, nurseEmail, onRefresh }) {
 // ═══ MAIN NURSE DASHBOARD ═══════════════════════════════════════
 export default function NurseDashboard() {
     const { user } = useAuth();
-    const [activeTab, setActiveTab] = useState('patients');
+    const { patients, questions, registerPatient, verifyPatient, recordVitals, getPatientVitals, getUserNotifications, answerQuestion, sendAISuggestion, getPatient } = useApp();
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'patients');
 
-    // Backend data
-    const [patients, setPatients] = useState([]);
-    const [doctors, setDoctors] = useState([]);
-    const [drafts, setDrafts] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    const loadData = async () => {
-        if (!user?.email) return;
-        setLoading(true);
-        try {
-            const [uRes, dRes, drRes] = await Promise.all([
-                apiListUsers().catch(() => []),
-                apiListDoctors().catch(() => ({ doctors: [] })),
-                apiGetDrafts().catch(() => ({ drafts: [] })),
-            ]);
-            const allUsers = Array.isArray(uRes) ? uRes : [];
-            setPatients(allUsers.filter(u => u.role === 'patient'));
-            setDoctors(dRes.doctors || []);
-            setDrafts(drRes.drafts || []);
-        } catch (err) {
-            console.error('Failed to load nurse data:', err);
+    useEffect(() => {
+        const tab = searchParams.get('tab');
+        if (tab) {
+            setActiveTab(tab);
+        } else {
+            setActiveTab('patients');
         }
-        setLoading(false);
-    };
+    }, [searchParams]);
 
-    useEffect(() => { loadData(); }, [user?.email]);
-
-    const pendingCount = drafts.filter(d => d.status === 'ai_generated' || d.status === 'pending').length;
+    const pendingCount = questions.filter(q => q.status === 'pending').length;
 
     const tabs = [
         { id: 'patients', label: 'Patient List', icon: Users },
@@ -398,28 +383,21 @@ export default function NurseDashboard() {
         { id: 'notifications', label: 'Questions', icon: Bell, badge: pendingCount },
     ];
 
-    if (loading) {
-        return (
-            <div className="page-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-                <Loader2 size={32} className="spin" color="#059669" />
-            </div>
-        );
-    }
-
     return (
         <div className="page-container">
-            <div className="page-header">
-                <h1 className="page-title">Nurse Dashboard</h1>
-                <p className="page-subtitle">Welcome, {user?.name}. {user?.department || 'General'} Department · {patients.length} patients</p>
-            </div>
+            <HeroBanner
+                role="nurse"
+                title="Nurse Dashboard"
+                subtitle={`Welcome, ${user?.name}. You are assigned to the ${user?.department || 'General'} Department with ${patients.length} active patients.`}
+            />
 
             {/* Stats */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
                 {[
                     { label: 'Total Patients', value: patients.length, icon: Users, color: '#0d9488' },
-                    { label: 'Doctors', value: doctors.length, icon: CheckCircle, color: '#10b981' },
-                    { label: 'AI Drafts', value: drafts.length, icon: Brain, color: '#047857' },
-                    { label: 'Pending Review', value: pendingCount, icon: MessageSquare, color: pendingCount > 0 ? '#f59e0b' : '#10b981' },
+                    { label: 'Verified', value: patients.filter(p => p.verified).length, icon: ShieldCheck, color: '#10b981' },
+                    { label: 'Vitals Today', value: 3, icon: Activity, color: '#047857' },
+                    { label: 'Pending Questions', value: pendingCount, icon: MessageSquare, color: pendingCount > 0 ? '#f59e0b' : '#10b981' },
                 ].map(s => (
                     <div key={s.label} className="card-flat" style={{ padding: '1.25rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <div style={{ width: 44, height: 44, borderRadius: 'var(--radius-md)', background: `${s.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -453,11 +431,83 @@ export default function NurseDashboard() {
 
             {/* Tab Content */}
             <div className="animate-fade-in">
-                {activeTab === 'patients' && <PatientList patients={patients} />}
-                {activeTab === 'register' && <RegisterPatient nurseEmail={user?.email} doctors={doctors} onSuccess={loadData} />}
-                {activeTab === 'vitals' && <RecordVitals patients={patients} onSuccess={loadData} />}
-                {activeTab === 'notifications' && <NurseNotifications drafts={drafts} nurseEmail={user?.email} onRefresh={loadData} />}
+                {activeTab === 'patients' && <PatientList patients={patients} getPatientVitals={getPatientVitals} />}
+                {activeTab === 'register' && <RegisterPatient registerPatient={registerPatient} nurseId={user.id} verifyPatient={verifyPatient} />}
+                {activeTab === 'vitals' && <RecordVitals patients={patients} recordVitals={recordVitals} nurseId={user.id} />}
+                {activeTab === 'notifications' && (
+                    <NurseNotifications questions={questions} getPatient={getPatient} answerQuestion={answerQuestion} sendAISuggestion={sendAISuggestion} nurseId={user.id} />
+                )}
             </div>
+        </div>
+    );
+}
+
+// ═══ SUB-TAB: Nurse Notifications ═══════════════════════════════
+function NurseNotifications({ questions, getPatient, answerQuestion, sendAISuggestion, nurseId }) {
+    const [expandedQ, setExpandedQ] = useState(null);
+    const [responseText, setResponseText] = useState('');
+
+    const pendingQuestions = questions.filter(q => q.status === 'pending');
+
+    return (
+        <div>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertCircle size={16} color="#f59e0b" /> Pending Patient Questions ({pendingQuestions.length})
+            </h3>
+
+            {pendingQuestions.map(q => {
+                const patient = getPatient(q.patientId);
+                const isExpanded = expandedQ === q.id;
+
+                return (
+                    <div key={q.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: 0, overflow: 'hidden', borderLeft: '4px solid #f59e0b' }}>
+                        <div onClick={() => { setExpandedQ(isExpanded ? null : q.id); setResponseText(''); }} style={{ padding: '1rem 1.25rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg, #0d9488, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, flexShrink: 0 }}>
+                                {patient?.name?.charAt(0)}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{patient?.name}</div>
+                                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 400 }}>{q.question}</div>
+                            </div>
+                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </div>
+
+                        {isExpanded && (
+                            <div className="animate-fade-in" style={{ padding: '0 1.25rem 1.25rem', borderTop: '1px solid var(--color-border-light)' }}>
+                                <div style={{ padding: '0.75rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', margin: '0.75rem 0' }}>
+                                    <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Question</div>
+                                    <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>{q.question}</div>
+                                </div>
+
+                                <div style={{ padding: '0.75rem', background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)', borderRadius: 'var(--radius-md)', marginBottom: '0.75rem' }}>
+                                    <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-accent)', textTransform: 'uppercase', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                        <Brain size={12} /> AI Suggestion
+                                    </div>
+                                    <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{q.aiSuggestion}</div>
+                                </div>
+
+                                <textarea className="input" rows={3} placeholder="Your response..." value={responseText} onChange={e => setResponseText(e.target.value)} style={{ marginBottom: '0.75rem' }} />
+
+                                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                                    <button className="btn btn-secondary" onClick={() => { sendAISuggestion(q.id, nurseId); setExpandedQ(null); }}>
+                                        <Brain size={14} /> Send AI Suggestion
+                                    </button>
+                                    <button className="btn btn-primary" onClick={() => { if (responseText.trim()) { answerQuestion(q.id, responseText, nurseId); setExpandedQ(null); setResponseText(''); } }} disabled={!responseText.trim()}>
+                                        <Send size={14} /> Send Response
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+
+            {pendingQuestions.length === 0 && (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+                    <CheckCircle size={36} color="var(--color-success)" style={{ marginBottom: '0.5rem' }} />
+                    <p>No pending questions</p>
+                </div>
+            )}
         </div>
     );
 }

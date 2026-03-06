@@ -303,12 +303,22 @@ def get_profile(email: str):
         return {"profile": None}
     return {
         "profile": {
+            "id": str(profile["_id"]),
+            "user_id": profile.get("user_id", ""),
+            "name": profile.get("name", ""),
             "email": profile.get("email", ""),
             "phone": profile.get("phone", ""),
+            "age": profile.get("age", 0),
+            "gender": profile.get("gender", ""),
+            "date_of_birth": profile.get("date_of_birth", ""),
             "address": profile.get("address", ""),
             "emergency_contact": profile.get("emergency_contact", ""),
             "blood_group": profile.get("blood_group", ""),
-            "allergies": profile.get("allergies", ""),
+            "conditions": profile.get("conditions", []),
+            "allergies": profile.get("allergies", []),
+            "verified": profile.get("verified", False),
+            "status": profile.get("status", "active"),
+            "created_at": profile.get("created_at", ""),
         }
     }
 

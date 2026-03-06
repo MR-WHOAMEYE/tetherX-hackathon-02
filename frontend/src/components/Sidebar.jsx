@@ -9,6 +9,12 @@ import {
 } from 'lucide-react';
 
 const roleNavConfig = {
+    admin: {
+        color: '#6366f1',
+        gradient: 'linear-gradient(135deg, #6366f1, #818cf8)',
+        label: 'Admin Portal',
+        icon: Zap,
+    },
     doctor: {
         color: '#059669',
         gradient: 'linear-gradient(135deg, #059669, #10b981)',
@@ -45,27 +51,32 @@ export default function Sidebar() {
     const unreadCount = notifs.filter(n => !n.read).length;
 
     const navItems = {
+        admin: [
+            { path: '/admin', tab: '', label: 'Dashboard', icon: LayoutDashboard },
+            { path: '/admin?tab=create', tab: 'create', label: 'Create Account', icon: UserPlus },
+            { path: '/admin?tab=staff', tab: 'staff', label: 'Staff Directory', icon: Users },
+        ],
         doctor: [
-            { path: '/doctor', label: 'Dashboard', icon: LayoutDashboard },
-            { path: '/doctor?tab=patients', label: 'My Patients', icon: Users },
-            { path: '/doctor?tab=prescribe', label: 'Prescribe', icon: Pill },
-            { path: '/doctor?tab=reports', label: 'Reports', icon: FileText },
-            { path: '/doctor?tab=notifications', label: 'Patient Questions', icon: MessageSquare, badge: pendingQCount },
+            { path: '/doctor', tab: '', label: 'Dashboard', icon: LayoutDashboard },
+            { path: '/doctor?tab=patients', tab: 'patients', label: 'My Patients', icon: Users },
+            { path: '/doctor?tab=prescribe', tab: 'prescribe', label: 'Prescribe', icon: Pill },
+            { path: '/doctor?tab=reports', tab: 'reports', label: 'Reports', icon: FileText },
+            { path: '/doctor?tab=notifications', tab: 'notifications', label: 'Patient Questions', icon: MessageSquare, badge: pendingQCount },
         ],
         nurse: [
-            { path: '/nurse', label: 'Dashboard', icon: LayoutDashboard },
-            { path: '/nurse?tab=patients', label: 'Patient List', icon: Users },
-            { path: '/nurse?tab=register', label: 'Register Patient', icon: UserPlus },
-            { path: '/nurse?tab=vitals', label: 'Record Vitals', icon: Activity },
-            { path: '/nurse?tab=notifications', label: 'Questions', icon: MessageSquare, badge: pendingQCount },
+            { path: '/nurse', tab: '', label: 'Dashboard', icon: LayoutDashboard },
+            { path: '/nurse?tab=patients', tab: 'patients', label: 'Patient List', icon: Users },
+            { path: '/nurse?tab=register', tab: 'register', label: 'Register Patient', icon: UserPlus },
+            { path: '/nurse?tab=vitals', tab: 'vitals', label: 'Record Vitals', icon: Activity },
+            { path: '/nurse?tab=notifications', tab: 'notifications', label: 'Questions', icon: MessageSquare, badge: pendingQCount },
         ],
         patient: [
-            { path: '/patient', label: 'Dashboard', icon: LayoutDashboard },
-            { path: '/patient?tab=reports', label: 'My Reports', icon: FileText },
-            { path: '/patient?tab=prescriptions', label: 'Prescriptions', icon: Pill },
-            { path: '/patient?tab=vitals', label: 'My Vitals', icon: Activity },
-            { path: '/patient?tab=ask', label: 'Ask AI', icon: Brain },
-            { path: '/patient?tab=notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
+            { path: '/patient', tab: '', label: 'Dashboard', icon: LayoutDashboard },
+            { path: '/patient?tab=reports', tab: 'reports', label: 'My Reports', icon: FileText },
+            { path: '/patient?tab=prescriptions', tab: 'prescriptions', label: 'Prescriptions', icon: Pill },
+            { path: '/patient?tab=vitals', tab: 'vitals', label: 'My Vitals', icon: Activity },
+            { path: '/patient?tab=ask', tab: 'ask', label: 'Ask AI', icon: Brain },
+            { path: '/patient?tab=notifications', tab: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
         ],
     };
 
@@ -80,15 +91,15 @@ export default function Sidebar() {
         navigate('/login');
     };
 
-    const isActive = (itemPath) => {
-        const [base, query] = itemPath.split('?');
+    const isActive = (itemTab, itemPath) => {
+        const [base] = itemPath.split('?');
         const currentBase = location.pathname;
-        const currentSearch = location.search;
+        if (currentBase !== base) return false;
 
-        if (!query) {
-            return currentBase === base && !currentSearch;
-        }
-        return currentBase === base && currentSearch === `?${query}`;
+        const currentParams = new URLSearchParams(location.search);
+        const currentTab = currentParams.get('tab') || '';
+
+        return currentTab === itemTab;
     };
 
     return (
@@ -163,7 +174,7 @@ export default function Sidebar() {
             <nav style={{ flex: 1, padding: '0.75rem 0.5rem', overflowY: 'auto' }}>
                 {items.map(item => {
                     const Icon = item.icon;
-                    const active = isActive(item.path);
+                    const active = isActive(item.tab, item.path);
 
                     return (
                         <button
@@ -171,24 +182,25 @@ export default function Sidebar() {
                             onClick={() => handleNavigate(item.path)}
                             title={collapsed ? item.label : undefined}
                             style={{
-                                width: '100%',
-                                padding: collapsed ? '0.75rem' : '0.625rem 1rem',
+                                width: collapsed ? '100%' : 'calc(100% + 0.5rem)',
+                                padding: collapsed ? '0.75rem' : '0.75rem 1.25rem',
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: '0.625rem',
+                                gap: '0.75rem',
                                 justifyContent: collapsed ? 'center' : 'flex-start',
-                                background: active ? `${config.color}15` : 'transparent',
+                                background: active ? `${config.color}12` : 'transparent',
                                 border: 'none',
-                                borderRadius: 'var(--radius-md)',
+                                borderRadius: collapsed ? 'var(--radius-md)' : '0 var(--radius-full) var(--radius-full) 0',
                                 color: active ? config.color : 'var(--color-text-secondary)',
-                                fontWeight: active ? 600 : 400,
-                                fontSize: '0.8125rem',
+                                fontWeight: active ? 600 : 500,
+                                fontSize: '0.875rem',
                                 cursor: 'pointer',
                                 marginBottom: '0.25rem',
                                 transition: 'all 0.15s ease',
                                 position: 'relative',
                                 fontFamily: 'var(--font-sans)',
-                                borderLeft: active ? `3px solid ${config.color}` : '3px solid transparent',
+                                marginLeft: collapsed ? 0 : '-0.5rem',
+                                borderLeft: active && !collapsed ? `4px solid ${config.color}` : '4px solid transparent',
                             }}
                         >
                             <Icon size={18} />

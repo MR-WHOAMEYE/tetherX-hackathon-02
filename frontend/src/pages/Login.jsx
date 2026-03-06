@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, Zap, Shield, Activity, Users } from 'lucide-react';
 
@@ -22,7 +22,8 @@ export default function Login() {
         setLoading(false);
 
         if (result.success) {
-            if (result.user.role === 'doctor') navigate('/doctor');
+            if (result.user.role === 'admin') navigate('/admin');
+            else if (result.user.role === 'doctor') navigate('/doctor');
             else if (result.user.role === 'nurse') navigate('/nurse');
             else navigate('/patient');
         } else {
@@ -274,16 +275,6 @@ export default function Login() {
                             {loading ? 'Signing in...' : <>Sign In <ArrowRight size={18} /></>}
                         </button>
                     </form>
-
-                    {/* Create Account */}
-                    <div style={{ textAlign: 'center', marginTop: '1.25rem' }}>
-                        <span style={{ fontSize: '0.8125rem', color: '#6b7280' }}>
-                            New user?{' '}
-                            <Link to="/register" style={{ color: '#059669', textDecoration: 'none', fontWeight: 600 }}>
-                                Create Account
-                            </Link>
-                        </span>
-                    </div>
 
                     {/* Demo Credentials */}
                     <div style={{

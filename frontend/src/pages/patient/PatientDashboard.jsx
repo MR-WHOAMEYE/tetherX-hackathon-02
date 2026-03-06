@@ -1,66 +1,146 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-    FileText, MessageSquare, Brain, Bell,
-    CheckCircle, Clock, Pill,
+    FileText, Download, MessageSquare, Brain, Send, Bell,
+    ChevronDown, ChevronUp, CheckCircle, Clock, Pill,
     Activity, AlertCircle, Loader2
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import {
-    apiGetMyVitals, apiGetMyPrescriptions, apiGetMyDiagnoses,
-    apiSubmitPatientQuery, apiGenerateDraft, apiGetPatientQueries,
-} from '../../services/api';
+import { useApp } from '../../context/AppContext';
+import { generateReportPDF } from '../../services/pdfService';
+import HeroBanner from '../../components/HeroBanner';
+
+// ─── AI suggestion generator ─────────────────────────────────────
+const generateAISuggestion = (question) => {
+    const q = question.toLowerCase();
+
+    if (q.includes('sugar') || q.includes('diabetes') || q.includes('glucose') || q.includes('metformin')) {
+        return `Regarding your blood sugar concern:\n\n**Do NOT adjust medication dosages on your own.** Persistently elevated blood sugar may indicate:\n\n1. **Medication adjustment needed** — Your doctor may need to modify your regimen\n2. **Dietary factors** — High carbohydrate intake can override medication\n3. **Illness or stress** — These temporarily raise blood sugar\n\n**Immediate steps:**\n- Continue current medications as prescribed\n- Monitor fasting and post-meal blood sugar levels\n- Reduce refined carbohydrate intake\n- Stay well hydrated\n- Schedule a follow-up within 2-3 days\n\n**⚠️ Seek emergency care if you experience:** Nausea/vomiting, fruity-smelling breath, rapid breathing, or confusion.\n\n*This is an AI-generated suggestion. Your doctor will review and provide a personalized response.*`;
+    }
+
+    if (q.includes('pain') || q.includes('ache') || q.includes('hurt')) {
+        return `Regarding your pain concern:\n\n**General pain management guidance:**\n\n1. **Location and severity** — Note the exact location, intensity (1-10), and type (sharp, dull, throbbing)\n2. **Over-the-counter options** — Paracetamol (500mg) may help for mild to moderate pain. Avoid NSAIDs if you have kidney issues.\n3. **When to worry** — Sudden severe pain, pain with fever, or pain that prevents normal activities\n\n**Do:**\n- Rest the affected area\n- Apply ice/heat as appropriate\n- Keep a pain diary\n\n**Don't:**\n- Don't take more medication than prescribed\n- Don't ignore worsening symptoms\n\n**⚠️ Seek immediate care if:** Chest pain, sudden severe headache, or pain with numbness/weakness.\n\n*This is an AI-generated suggestion. Your doctor will review and respond.*`;
+    }
+
+    if (q.includes('medication') || q.includes('medicine') || q.includes('side effect') || q.includes('drug')) {
+        return `Regarding your medication concern:\n\n**Important medication safety guidelines:**\n\n1. **Never stop or adjust** medication without consulting your doctor\n2. **Common side effects** may include nausea, dizziness, headache — most are temporary\n3. **Report immediately** if you experience: severe allergic reaction, difficulty breathing, unusual bleeding\n\n**Steps to take:**\n- Continue your current medications\n- Note the specific symptoms and when they started\n- Take medications with food if causing stomach upset\n- Keep a record of all medications including OTC\n\n**Your doctor will review** this concern and may adjust your prescription if needed.\n\n*This is an AI-generated suggestion. A personalized response will follow.*`;
+    }
+
+    if (q.includes('appointment') || q.includes('schedule') || q.includes('visit') || q.includes('follow')) {
+        return `Regarding your appointment/follow-up:\n\n**Scheduling guidance:**\n\n1. Your care team has been notified of your request\n2. For routine follow-ups, appointments are typically within 1-2 weeks\n3. For urgent concerns, same-day or next-day slots may be available\n\n**Before your appointment:**\n- List all current symptoms and concerns\n- Bring your medication list\n- Note any changes since your last visit\n- Have your insurance information ready\n\n*Your doctor or nurse will confirm scheduling details.*`;
+    }
+
+    // Default suggestion
+    return `Thank you for reaching out.\n\n**Your question has been received and forwarded to your care team.**\n\nBased on your query, here are some general health tips:\n\n1. **Continue prescribed medications** as directed\n2. **Monitor your symptoms** — keep a diary of any changes\n3. **Stay hydrated** and maintain a balanced diet\n4. **Rest adequately** — sleep 7-8 hours\n5. **Contact emergency services (112)** for any severe or life-threatening symptoms\n\n**Your doctor and nurse have been notified** and will review your question along with this AI analysis. You will receive a personalized response.\n\n*This is an AI-generated preliminary suggestion. Professional medical advice will follow.*`;
+};
+
+
+// ═══ SUB-TAB: My Reports ════════════════════════════════════════
+function MyReports({ reports, patientId, getUser, prescriptions, vitals, patient }) {
+    const [expandedId, setExpandedId] = useState(null);
+
+    const handleDownloadPDF = (report) => {
+        const doctor = getUser(report.doctorId);
+        const rx = prescriptions.find(p => p.id === report.prescriptionId);
+        const patientVitals = vitals.filter(v => v.patientId === report.patientId)
+            .sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
+        generateReportPDF(report, patient, doctor || {}, rx, patientVitals);
+    };
+
+    return (
+        <div>
+            {reports.length === 0 ? (
+                <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+                    <FileText size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
+                    <p style={{ fontSize: '1rem', fontWeight: 500 }}>No reports yet</p>
+                    <p style={{ fontSize: '0.875rem' }}>Your doctor will generate reports after your consultations</p>
+                </div>
+            ) : (
+                reports.map(report => {
+                    const doctor = getUser(report.doctorId);
+                    const isExpanded = expandedId === report.id;
+
+                    return (
+                        <div key={report.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: 0, overflow: 'hidden' }}>
+                            <div onClick={() => setExpandedId(isExpanded ? null : report.id)} style={{ padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.875rem', cursor: 'pointer' }}>
+                                <div style={{ width: 42, height: 42, borderRadius: 'var(--radius-md)', background: 'rgba(16,185,129,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    <FileText size={20} color="#10b981" />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>{report.title}</div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.125rem' }}>
+                                        {report.type} · {doctor?.name || 'Doctor'} · {new Date(report.generatedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                    </div>
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); handleDownloadPDF(report); }} className="btn btn-sm btn-primary" style={{ fontSize: '0.75rem' }}>
+                                    <Download size={14} /> Download PDF
+                                </button>
+                                {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                            </div>
+
+                            {isExpanded && (
+                                <div className="animate-fade-in" style={{ padding: '0 1.25rem 1.25rem', borderTop: '1px solid var(--color-border-light)' }}>
+                                    <div style={{ marginTop: '0.75rem' }}>
+                                        <div style={{ padding: '0.75rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', marginBottom: '0.75rem' }}>
+                                            <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Diagnosis</div>
+                                            <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>{report.diagnosis}</div>
+                                        </div>
+
+                                        {report.findings && (
+                                            <div style={{ padding: '0.75rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', marginBottom: '0.75rem' }}>
+                                                <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Clinical Findings</div>
+                                                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>{report.findings}</div>
+                                            </div>
+                                        )}
+
+                                        {report.recommendations && (
+                                            <div style={{ padding: '0.75rem', background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: 'var(--radius-md)', marginBottom: '0.75rem' }}>
+                                                <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: '#10b981', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Recommendations</div>
+                                                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{report.recommendations}</div>
+                                            </div>
+                                        )}
+
+                                        <button onClick={() => handleDownloadPDF(report)} className="btn btn-primary" style={{ marginTop: '0.5rem' }}>
+                                            <Download size={16} /> Download Full Report as PDF
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })
+            )}
+        </div>
+    );
+}
+
 
 // ═══ SUB-TAB: Ask AI Question ═══════════════════════════════════
-function AskQuestion({ userEmail, userName }) {
+function AskQuestion({ patientId, patientUserId, submitQuestion }) {
     const [question, setQuestion] = useState('');
-    const [category, setCategory] = useState('general');
-    const [aiDraft, setAiDraft] = useState(null);
+    const [aiSuggestion, setAiSuggestion] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
     const [submitted, setSubmitted] = useState(false);
 
-    const handleSubmitAndGenerate = async () => {
+    const handleAskAI = async () => {
         if (!question.trim()) return;
         setIsGenerating(true);
-        setAiDraft(null);
+        setAiSuggestion('');
 
-        try {
-            // Submit query to backend
-            const result = await apiSubmitPatientQuery({
-                patient_email: userEmail,
-                patient_name: userName,
-                subject: question.slice(0, 80),
-                category,
-                message: question,
-                priority: 'medium',
-            });
-
-            // Auto-generate AI draft via backend pipeline
-            if (result.id) {
-                try {
-                    const draft = await apiGenerateDraft(result.id);
-                    setAiDraft({
-                        text: draft.draft_text,
-                        intent: draft.intent,
-                        confidence: draft.confidence_score,
-                        sources: draft.sources || [],
-                    });
-                } catch {
-                    setAiDraft({ text: 'AI analysis is being processed. Your doctor will review shortly.', intent: category, confidence: 0 });
-                }
-            }
-
-            setSubmitted(true);
-            setTimeout(() => setSubmitted(false), 5000);
-        } catch (err) {
-            console.error('Submit failed:', err);
-        }
+        // Simulate AI generation with typing effect
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const suggestion = generateAISuggestion(question);
+        setAiSuggestion(suggestion);
         setIsGenerating(false);
     };
 
-    const handleReset = () => {
+    const handleSubmit = () => {
+        if (!question.trim() || !aiSuggestion) return;
+        submitQuestion(patientId, patientUserId, question, aiSuggestion);
         setQuestion('');
-        setAiDraft(null);
-        setCategory('general');
+        setAiSuggestion('');
+        setSubmitted(true);
+        setTimeout(() => setSubmitted(false), 4000);
     };
 
     return (
@@ -71,24 +151,11 @@ function AskQuestion({ userEmail, userName }) {
                     <div>
                         <div style={{ fontWeight: 600, color: '#059669', fontSize: '0.875rem' }}>Question Submitted Successfully!</div>
                         <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', marginTop: '0.125rem' }}>
-                            Your doctor and nurse have been notified. You'll receive a response soon.
+                            Your doctor and nurse have been notified. You'll receive a response via notifications.
                         </div>
                     </div>
                 </div>
             )}
-
-            <div style={{ marginBottom: '1rem' }}>
-                <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                    Category
-                </label>
-                <select className="input" value={category} onChange={e => setCategory(e.target.value)} style={{ maxWidth: 260 }}>
-                    <option value="general">General</option>
-                    <option value="medication">Medication</option>
-                    <option value="billing">Billing</option>
-                    <option value="appointment">Appointment</option>
-                    <option value="lab_results">Lab Results</option>
-                </select>
-            </div>
 
             <div style={{ marginBottom: '1.25rem' }}>
                 <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
@@ -106,19 +173,19 @@ function AskQuestion({ userEmail, userName }) {
 
             <button
                 className="btn btn-accent"
-                onClick={handleSubmitAndGenerate}
+                onClick={handleAskAI}
                 disabled={!question.trim() || isGenerating}
                 style={{ marginBottom: '1.5rem' }}
             >
                 {isGenerating ? (
-                    <><Loader2 size={16} className="spin" /> Submitting & Analyzing...</>
+                    <><Loader2 size={16} className="spin" /> Analyzing your question...</>
                 ) : (
-                    <><Brain size={16} /> Submit & Get AI Analysis</>
+                    <><Brain size={16} /> Get AI Analysis</>
                 )}
             </button>
 
-            {/* AI Draft Display */}
-            {aiDraft && (
+            {/* AI Suggestion Display */}
+            {aiSuggestion && (
                 <div className="animate-fade-in" style={{ marginBottom: '1.25rem' }}>
                     <div style={{
                         padding: '1.25rem', background: 'rgba(6,182,212,0.06)',
@@ -130,28 +197,15 @@ function AskQuestion({ userEmail, userName }) {
                         }}>
                             <Brain size={18} color="var(--color-accent)" />
                             AI Health Analysis
-                            {aiDraft.confidence > 0 && (
-                                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: aiDraft.confidence >= 0.7 ? '#059669' : '#d97706',
-                                    background: aiDraft.confidence >= 0.7 ? '#d1fae5' : '#fef3c7', padding: '0.125rem 0.5rem', borderRadius: 'var(--radius-full)', fontWeight: 600 }}>
-                                    {Math.round(aiDraft.confidence * 100)}% confidence
-                                </span>
-                            )}
                         </div>
                         <div style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', lineHeight: 1.7, whiteSpace: 'pre-line' }}>
-                            {aiDraft.text}
+                            {aiSuggestion}
                         </div>
-                        {aiDraft.sources?.length > 0 && (
-                            <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
-                                {aiDraft.sources.map((s, i) => (
-                                    <span key={i} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.5rem', background: '#eff6ff', color: '#3b82f6', borderRadius: 'var(--radius-full)' }}>📚 {s}</span>
-                                ))}
-                            </div>
-                        )}
                     </div>
                 </div>
             )}
 
-            {aiDraft && (
+            {aiSuggestion && (
                 <div style={{
                     padding: '1rem', background: 'rgba(245,158,11,0.06)',
                     border: '1px solid rgba(245,158,11,0.2)', borderRadius: 'var(--radius-md)',
@@ -159,16 +213,17 @@ function AskQuestion({ userEmail, userName }) {
                 }}>
                     <p style={{ fontSize: '0.8125rem', color: '#d97706' }}>
                         <AlertCircle size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
-                        Your question and AI analysis have been sent to your doctor and nurse for review. They will provide a professional response.
+                        Your question along with the AI analysis will be sent to your doctor and nurse for review. They will provide a professional response.
                     </p>
                 </div>
             )}
 
-            {aiDraft && (
-                <button className="btn btn-secondary" onClick={handleReset} style={{ minWidth: 200 }}>
-                    Ask another question
+            {aiSuggestion && (
+                <button className="btn btn-primary" onClick={handleSubmit} style={{ minWidth: 280 }}>
+                    <Send size={16} /> Submit Question to Medical Team
                 </button>
             )}
+
             {/* Quick Question Presets */}
             <div style={{ marginTop: '2rem' }}>
                 <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
@@ -199,79 +254,66 @@ function AskQuestion({ userEmail, userName }) {
 
 
 // ═══ SUB-TAB: Patient Notifications ═════════════════════════════
-function PatientNotifications({ queries }) {
-    // Show answered queries as notification-like items
-    const answered = queries.filter(q => q.status === 'responded' || q.status === 'staff_reviewing');
-    const pending = queries.filter(q => q.status !== 'responded');
+function PatientNotifications({ questions, getUserNotifications, markNotificationRead, userId, getUser }) {
+    const notifs = getUserNotifications(userId);
 
     return (
         <div>
-            {queries.length === 0 ? (
+            {notifs.length === 0 ? (
                 <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
                     <Bell size={36} style={{ marginBottom: '0.5rem', opacity: 0.5 }} />
                     <p>No notifications yet</p>
-                    <p style={{ fontSize: '0.8125rem', marginTop: '0.25rem' }}>Submit a question to your care team to get started</p>
                 </div>
             ) : (
-                <>
-                    {answered.length > 0 && (
-                        <div style={{ marginBottom: '1rem' }}>
-                            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#059669', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Responses Received</div>
-                            {answered.map(q => (
-                                <div key={q.id} className="card-flat" style={{
-                                    marginBottom: '0.5rem', padding: '1rem 1.25rem',
-                                    borderLeft: '4px solid #059669',
-                                }}>
-                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(5,150,105,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                            <CheckCircle size={18} color="#059669" />
-                                        </div>
-                                        <div style={{ flex: 1 }}>
-                                            <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{q.subject}</div>
-                                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.125rem' }}>
-                                                {q.category} · {new Date(q.created_at).toLocaleDateString()}
-                                            </div>
-                                            {q.final_response && (
-                                                <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: 'var(--radius-md)' }}>
-                                                    <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: '#10b981', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
-                                                        Response from Medical Staff
-                                                    </div>
-                                                    <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
-                                                        {q.final_response}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                notifs.map(notif => {
+                    const relatedQ = questions.find(q => q.id === notif.relatedQuestionId);
 
-                    {pending.length > 0 && (
-                        <div>
-                            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Pending</div>
-                            {pending.map(q => (
-                                <div key={q.id} className="card-flat" style={{
-                                    marginBottom: '0.5rem', padding: '1rem 1.25rem',
-                                    borderLeft: '4px solid #d97706', opacity: 0.8,
+                    return (
+                        <div
+                            key={notif.id}
+                            onClick={() => markNotificationRead(notif.id)}
+                            className="card-flat"
+                            style={{
+                                marginBottom: '0.5rem', padding: '1rem 1.25rem',
+                                cursor: 'pointer',
+                                borderLeft: `4px solid ${notif.read ? 'var(--color-border)' : notif.type === 'question_answered' ? '#059669' : '#0d9488'}`,
+                                opacity: notif.read ? 0.6 : 1,
+                            }}
+                        >
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                                <div style={{
+                                    width: 36, height: 36, borderRadius: '50%',
+                                    background: notif.type === 'question_answered' ? 'rgba(5,150,105,0.1)' : 'rgba(13,148,136,0.1)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                                 }}>
-                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(217,119,6,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                            <Clock size={18} color="#d97706" />
-                                        </div>
-                                        <div style={{ flex: 1 }}>
-                                            <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{q.subject}</div>
-                                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.125rem' }}>
-                                                {q.category} · Submitted {new Date(q.created_at).toLocaleDateString()} · Awaiting review
+                                    {notif.type === 'question_answered' ? <CheckCircle size={18} color="#059669" /> : <Bell size={18} color="#0d9488" />}
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                                        {notif.title}
+                                        {!notif.read && <span style={{ marginLeft: 8, width: 8, height: 8, borderRadius: '50%', background: '#059669', display: 'inline-block' }} />}
+                                    </div>
+                                    <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>{notif.message}</div>
+                                    <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
+                                        {new Date(notif.createdAt).toLocaleString()}
+                                    </div>
+
+                                    {/* Show response if it's a question_answered notification */}
+                                    {notif.type === 'question_answered' && relatedQ && relatedQ.status === 'answered' && (
+                                        <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: 'var(--radius-md)' }}>
+                                            <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: '#10b981', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                                                Response from {getUser(relatedQ.respondedBy)?.name || 'Medical Staff'}
+                                            </div>
+                                            <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+                                                {relatedQ.doctorResponse || relatedQ.nurseResponse}
                                             </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
-                            ))}
+                            </div>
                         </div>
-                    )}
-                </>
+                    );
+                })
             )}
         </div>
     );
@@ -283,77 +325,90 @@ function PatientNotifications({ queries }) {
 // ═══════════════════════════════════════════════════════════════════
 export default function PatientDashboard() {
     const { user } = useAuth();
-    const [activeTab, setActiveTab] = useState('prescriptions');
+    const {
+        patients, vitals, prescriptions, reports, questions,
+        getPatientByUserId, getPatientReports, getPatientPrescriptions,
+        getPatientVitals, getPatientQuestions, getUser,
+        submitQuestion, getUserNotifications, markNotificationRead
+    } = useApp();
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'reports');
 
-    // Backend data state
-    const [vitals, setVitals] = useState([]);
-    const [prescriptions, setPrescriptions] = useState([]);
-    const [diagnoses, setDiagnoses] = useState([]);
-    const [queries, setQueries] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    // Fetch all patient data on mount
     useEffect(() => {
-        if (!user?.email) return;
-        let cancelled = false;
+        const tab = searchParams.get('tab');
+        if (tab) {
+            setActiveTab(tab);
+        } else {
+            setActiveTab('reports');
+        }
+    }, [searchParams]);
 
-        const load = async () => {
-            setLoading(true);
-            try {
-                const [vRes, pRes, dRes, qRes] = await Promise.all([
-                    apiGetMyVitals(user.email).catch(() => ({ vitals: [] })),
-                    apiGetMyPrescriptions(user.email).catch(() => ({ prescriptions: [] })),
-                    apiGetMyDiagnoses(user.email).catch(() => ({ diagnoses: [] })),
-                    apiGetPatientQueries({ patient_email: user.email }).catch(() => ({ queries: [] })),
-                ]);
-                if (cancelled) return;
-                setVitals(vRes.vitals || []);
-                setPrescriptions(pRes.prescriptions || []);
-                setDiagnoses(dRes.diagnoses || []);
-                setQueries(qRes.queries || []);
-            } catch (err) {
-                console.error('Failed to load patient data:', err);
-            }
-            setLoading(false);
-        };
-        load();
-        return () => { cancelled = true; };
-    }, [user?.email]);
-
-    const respondedCount = queries.filter(q => q.status === 'responded').length;
+    const patient = getPatientByUserId(user?.id);
+    const patientReports = patient ? getPatientReports(patient.id) : [];
+    const patientRx = patient ? getPatientPrescriptions(patient.id) : [];
+    const patientVitals = patient ? getPatientVitals(patient.id) : [];
+    const patientQuestions = patient ? getPatientQuestions(patient.id) : [];
+    const notifs = getUserNotifications(user?.id);
+    const unreadCount = notifs.filter(n => !n.read).length;
 
     const tabs = [
+        { id: 'reports', label: 'My Reports', icon: FileText },
         { id: 'prescriptions', label: 'Prescriptions', icon: Pill },
         { id: 'vitals', label: 'My Vitals', icon: Activity },
-        { id: 'diagnoses', label: 'Diagnoses', icon: FileText },
         { id: 'ask', label: 'Ask AI Question', icon: Brain },
-        { id: 'notifications', label: 'Responses', icon: Bell, badge: respondedCount },
+        { id: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
     ];
 
-    if (loading) {
+    if (!patient) {
         return (
-            <div className="page-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-                <Loader2 size={32} className="spin" color="#059669" />
+            <div className="page-container">
+                <div style={{ textAlign: 'center', padding: '4rem 2rem' }}>
+                    <AlertCircle size={56} color="#f59e0b" style={{ marginBottom: '1rem' }} />
+                    <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>Profile Not Linked</h2>
+                    <p style={{ color: 'var(--color-text-secondary)', maxWidth: 450, margin: '0 auto' }}>
+                        Your account has not been linked to a patient record yet. Please ask the front desk or nurse to register you, or contact support.
+                    </p>
+                </div>
             </div>
         );
     }
 
     return (
         <div className="page-container">
-            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                    <h1 className="page-title">Welcome, {user?.name || 'Patient'}</h1>
-                    <p className="page-subtitle">{user?.email} · {user?.department || 'General'}</p>
-                </div>
-            </div>
+            <HeroBanner
+                role="patient"
+                title={`Welcome, ${patient.name}`}
+                subtitle={`${patient.id} · ${patient.age} yrs · ${patient.gender} · Blood Group: ${patient.bloodGroup}`}
+            >
+                {patient.conditions.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, color: '#5eead4' }}>Known Conditions:</div>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {patient.conditions.map(c => (
+                                <span key={c} style={{
+                                    background: 'rgba(94, 234, 212, 0.1)',
+                                    padding: '0.25rem 0.75rem',
+                                    borderRadius: 'var(--radius-full)',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 700,
+                                    color: '#5eead4',
+                                    border: '1px solid rgba(94, 234, 212, 0.2)'
+                                }}>
+                                    {c}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </HeroBanner>
 
             {/* Quick Stats */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
                 {[
-                    { label: 'Prescriptions', value: prescriptions.length, icon: Pill, color: '#0d9488' },
-                    { label: 'Vitals Records', value: vitals.length, icon: Activity, color: '#047857' },
-                    { label: 'Diagnoses', value: diagnoses.length, icon: FileText, color: '#10b981' },
-                    { label: 'Queries', value: queries.length, icon: MessageSquare, color: '#3b82f6' },
+                    { label: 'Reports', value: patientReports.length, icon: FileText, color: '#10b981' },
+                    { label: 'Prescriptions', value: patientRx.length, icon: Pill, color: '#0d9488' },
+                    { label: 'Vitals Records', value: patientVitals.length, icon: Activity, color: '#047857' },
+                    { label: 'Notifications', value: unreadCount, icon: Bell, color: unreadCount > 0 ? '#f59e0b' : '#10b981' },
                 ].map(s => (
                     <div key={s.label} className="card-flat" style={{ padding: '1.25rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <div style={{ width: 44, height: 44, borderRadius: 'var(--radius-md)', background: `${s.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -387,72 +442,85 @@ export default function PatientDashboard() {
 
             {/* Tab Content */}
             <div className="animate-fade-in">
+                {activeTab === 'reports' && (
+                    <MyReports reports={patientReports} patientId={patient.id} getUser={getUser} prescriptions={prescriptions} vitals={vitals} patient={patient} />
+                )}
+
                 {activeTab === 'prescriptions' && (
                     <div>
-                        {prescriptions.length === 0 ? (
+                        {patientRx.length === 0 ? (
                             <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
                                 <Pill size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
                                 <p>No prescriptions yet</p>
                             </div>
                         ) : (
-                            prescriptions.map((rx, idx) => (
-                                <div key={rx.id || idx} className="card-flat" style={{ marginBottom: '0.75rem', padding: '1.25rem' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                                        <div>
-                                            <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>{rx.medication}</div>
-                                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.125rem' }}>
-                                                Dr. {rx.doctor_name || 'N/A'} · {new Date(rx.created_at).toLocaleDateString()}
+                            patientRx.map(rx => {
+                                const doctor = getUser(rx.doctorId);
+                                return (
+                                    <div key={rx.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: '1.25rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                                            <div>
+                                                <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>{rx.diagnosis}</div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.125rem' }}>
+                                                    {rx.id} · {doctor?.name || 'Doctor'} · {new Date(rx.prescribedAt).toLocaleDateString()}
+                                                </div>
                                             </div>
+                                            <span className="badge badge-success">{rx.status}</span>
                                         </div>
-                                        <span className="badge badge-success">{rx.status || 'active'}</span>
-                                    </div>
 
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
-                                        {[
-                                            { l: 'Dosage', v: rx.dosage },
-                                            { l: 'Frequency', v: rx.frequency },
-                                            { l: 'Duration', v: rx.duration },
-                                            { l: 'Doctor', v: rx.doctor_name },
-                                        ].map(item => (
-                                            <div key={item.l} style={{ padding: '0.5rem', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
-                                                <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)' }}>{item.l}</div>
-                                                <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{item.v || '—'}</div>
+                                        <div className="table-container" style={{ marginBottom: rx.notes ? '0.75rem' : 0 }}>
+                                            <table>
+                                                <thead><tr><th>Medicine</th><th>Dosage</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
+                                                <tbody>
+                                                    {rx.medicines.map((m, i) => (
+                                                        <tr key={i}>
+                                                            <td style={{ fontWeight: 500, color: 'var(--color-text-primary)' }}>{m.name}</td>
+                                                            <td>{m.dosage}</td>
+                                                            <td>{m.frequency}</td>
+                                                            <td>{m.duration}</td>
+                                                            <td style={{ fontSize: '0.8125rem' }}>{m.instructions}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        {rx.notes && (
+                                            <div style={{ padding: '0.5rem 0.75rem', background: 'rgba(245,158,11,0.06)', borderRadius: 'var(--radius-sm)', fontSize: '0.8125rem', color: '#d97706' }}>
+                                                <strong>Note:</strong> {rx.notes}
                                             </div>
-                                        ))}
+                                        )}
                                     </div>
-
-                                    {rx.notes && (
-                                        <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(245,158,11,0.06)', borderRadius: 'var(--radius-sm)', fontSize: '0.8125rem', color: '#d97706' }}>
-                                            <strong>Note:</strong> {rx.notes}
-                                        </div>
-                                    )}
-                                </div>
-                            ))
+                                );
+                            })
                         )}
                     </div>
                 )}
 
                 {activeTab === 'vitals' && (
                     <div>
-                        {vitals.length === 0 ? (
+                        {patientVitals.length === 0 ? (
                             <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
                                 <Activity size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
                                 <p>No vitals recorded yet</p>
                             </div>
                         ) : (
-                            vitals.map((v, idx) => (
-                                <div key={v.id || idx} className="card-flat" style={{ marginBottom: '0.75rem', padding: '1.25rem' }}>
+                            patientVitals.map(v => (
+                                <div key={v.id} className="card-flat" style={{ marginBottom: '0.75rem', padding: '1.25rem' }}>
                                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-tertiary)', marginBottom: '0.75rem' }}>
-                                        Recorded on {new Date(v.recorded_at).toLocaleString()}
+                                        Recorded on {new Date(v.recordedAt).toLocaleString()}
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
                                         {[
-                                            { l: 'Blood Pressure', v: v.blood_pressure || '—' },
-                                            { l: 'Heart Rate', v: v.heart_rate ? `${v.heart_rate} bpm` : '—' },
-                                            { l: 'Temperature', v: v.temperature ? `${v.temperature}°F` : '—', w: v.temperature > 99.5 },
-                                            { l: 'SpO2', v: v.oxygen_saturation ? `${v.oxygen_saturation}%` : '—', w: v.oxygen_saturation < 95 },
-                                            { l: 'Weight', v: v.weight ? `${v.weight} kg` : '—' },
-                                        ].filter(item => item.v !== '—').map(item => (
+                                            { l: 'Temperature', v: `${v.temperature}°F`, w: v.temperature > 99.5 },
+                                            { l: 'Blood Pressure', v: `${v.bloodPressureSystolic}/${v.bloodPressureDiastolic} mmHg`, w: v.bloodPressureSystolic > 140 },
+                                            { l: 'Heart Rate', v: `${v.heartRate} bpm` },
+                                            { l: 'SpO2', v: `${v.oxygenSaturation}%`, w: v.oxygenSaturation < 95 },
+                                            { l: 'Weight', v: `${v.weight} kg` },
+                                            { l: 'Resp Rate', v: `${v.respiratoryRate}/min` },
+                                            { l: 'Blood Sugar (Fasting)', v: `${v.bloodSugarFasting} mg/dL`, w: v.bloodSugarFasting > 130 },
+                                            { l: 'Blood Sugar (PP)', v: `${v.bloodSugarPP} mg/dL`, w: v.bloodSugarPP > 180 },
+                                        ].map(item => (
                                             <div key={item.l} style={{ padding: '0.5rem', background: item.w ? 'rgba(245,158,11,0.06)' : 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', border: item.w ? '1px solid rgba(245,158,11,0.2)' : 'none' }}>
                                                 <div style={{ fontSize: '0.625rem', color: 'var(--color-text-muted)' }}>{item.l}</div>
                                                 <div style={{ fontSize: '0.875rem', fontWeight: 700, color: item.w ? '#fbbf24' : 'var(--color-text-primary)' }}>{item.v}</div>
@@ -466,40 +534,12 @@ export default function PatientDashboard() {
                     </div>
                 )}
 
-                {activeTab === 'diagnoses' && (
-                    <div>
-                        {diagnoses.length === 0 ? (
-                            <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
-                                <FileText size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
-                                <p>No diagnoses recorded yet</p>
-                            </div>
-                        ) : (
-                            diagnoses.map((d, idx) => (
-                                <div key={d.id || idx} className="card-flat" style={{ marginBottom: '0.75rem', padding: '1.25rem' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                        <div>
-                                            <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>{d.condition}</div>
-                                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.125rem' }}>
-                                                Dr. {d.doctor_name || 'N/A'} · {new Date(d.created_at).toLocaleDateString()}
-                                            </div>
-                                        </div>
-                                        <span className={`badge ${d.severity === 'high' ? 'badge-error' : d.severity === 'medium' ? 'badge-warning' : 'badge-success'}`}>
-                                            {d.severity || 'normal'}
-                                        </span>
-                                    </div>
-                                    {d.notes && <div style={{ marginTop: '0.5rem', fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>{d.notes}</div>}
-                                </div>
-                            ))
-                        )}
-                    </div>
-                )}
-
                 {activeTab === 'ask' && (
-                    <AskQuestion userEmail={user?.email} userName={user?.name} />
+                    <AskQuestion patientId={patient.id} patientUserId={user.id} submitQuestion={submitQuestion} />
                 )}
 
                 {activeTab === 'notifications' && (
-                    <PatientNotifications queries={queries} />
+                    <PatientNotifications questions={patientQuestions} getUserNotifications={getUserNotifications} markNotificationRead={markNotificationRead} userId={user.id} getUser={getUser} />
                 )}
             </div>
         </div>

@@ -34,6 +34,14 @@ export const AuthProvider = ({ children }) => {
         return authService.register(userData);
     }, []);
 
+    const verifyEmail = useCallback(async (userId, code) => {
+        return authService.verifyEmail(userId, code);
+    }, []);
+
+    const resendVerification = useCallback(async (userId) => {
+        return authService.resendVerification(userId);
+    }, []);
+
     const logout = useCallback(() => {
         authService.logout();
         setUser(null);
@@ -53,6 +61,8 @@ export const AuthProvider = ({ children }) => {
             isAuthenticated: !!user,
             login,
             register,
+            verifyEmail,
+            resendVerification,
             logout,
             refreshUser,
         }}>

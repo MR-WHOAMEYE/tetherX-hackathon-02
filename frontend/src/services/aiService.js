@@ -143,7 +143,7 @@ export const generateResponseDraft = (message, classification, context, patient)
 
 // Full AI pipeline: processes a raw message end-to-end
 export const processMessage = async (messageText, patient, onStageUpdate) => {
-    const stages = ['ingestion', 'nlp', 'intent', 'context', 'generation'];
+
 
     // Stage 1: Ingestion
     onStageUpdate?.('ingestion', 'processing');

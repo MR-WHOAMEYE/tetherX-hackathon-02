@@ -4,10 +4,11 @@ Uses MongoDB only — no SQLite mock data.
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from bson import ObjectId
 import os
 import time
+import bcrypt
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -46,6 +47,12 @@ class VitalRecord(BaseModel):
     sugar_level: Optional[float] = None
     temperature: Optional[float] = None
     heart_rate: Optional[int] = None
+    respiratory_rate: Optional[int] = None
+    oxygen_saturation: Optional[float] = None
+    weight: Optional[float] = None
+    height: Optional[float] = None
+    blood_sugar_fasting: Optional[float] = None
+    blood_sugar_pp: Optional[float] = None
     notes: Optional[str] = ""
 
 class NurseProfileUpdate(BaseModel):
@@ -228,6 +235,132 @@ def nurse_dashboard(department: Optional[str] = None, nurse_email: Optional[str]
     return result
 
 # ═══════════════════════════════════════════
+# REGISTER PATIENT (Nurse creates patient + user account)
+# ═══════════════════════════════════════════
+class PatientRegister(BaseModel):
+    name: str
+    email: str
+    phone: str
+    age: int
+    gender: Optional[str] = "Male"
+    date_of_birth: Optional[str] = ""
+    blood_group: Optional[str] = "O+"
+    address: Optional[str] = ""
+    emergency_contact: Optional[str] = ""
+    conditions: Optional[str] = ""   # comma-separated
+    allergies: Optional[str] = ""    # comma-separated
+    nurse_email: Optional[str] = ""
+    nurse_name: Optional[str] = ""
+
+@router.post("/register-patient")
+def register_patient(body: PatientRegister):
+    if users_col is None or patient_profiles_col is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    # Check if email already exists in users
+    if users_col.find_one({"email": body.email}):
+        raise HTTPException(status_code=409, detail="A user with this email already exists")
+
+    now = datetime.utcnow().isoformat()
+
+    # 1) Create user account — phone number as password
+    raw_password = body.phone
+    hashed = bcrypt.hashpw(raw_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    user_doc = {
+        "name": body.name,
+        "email": body.email,
+        "password": hashed,
+        "role": "patient",
+        "department": "",
+        "phone": body.phone,
+        "created_at": now,
+        "created_by": body.nurse_email or "nurse",
+    }
+    user_result = users_col.insert_one(user_doc)
+
+    # 2) Store full patient profile
+    conditions_list = [c.strip() for c in body.conditions.split(",") if c.strip()] if body.conditions else []
+    allergies_list = [a.strip() for a in body.allergies.split(",") if a.strip()] if body.allergies else []
+
+    patient_doc = {
+        "user_id": str(user_result.inserted_id),
+        "name": body.name,
+        "email": body.email,
+        "phone": body.phone,
+        "age": body.age,
+        "gender": body.gender or "Male",
+        "date_of_birth": body.date_of_birth or "",
+        "blood_group": body.blood_group or "O+",
+        "address": body.address or "",
+        "emergency_contact": body.emergency_contact or "",
+        "conditions": conditions_list,
+        "allergies": allergies_list,
+        "registered_by": body.nurse_email or "",
+        "registered_by_name": body.nurse_name or "",
+        "verified": False,
+        "status": "active",
+        "created_at": now,
+    }
+    profile_result = patient_profiles_col.insert_one(patient_doc)
+
+    return {
+        "message": "Patient registered successfully",
+        "patient": {
+            "id": str(profile_result.inserted_id),
+            "user_id": str(user_result.inserted_id),
+            "name": body.name,
+            "email": body.email,
+            "phone": body.phone,
+        },
+    }
+
+@router.put("/verify-patient/{patient_id}")
+def verify_patient(patient_id: str):
+    if patient_profiles_col is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    result = patient_profiles_col.update_one(
+        {"_id": ObjectId(patient_id)},
+        {"$set": {"verified": True, "verified_at": datetime.utcnow().isoformat()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return {"message": "Patient verified"}
+
+@router.get("/patients")
+def list_patients(nurse_email: Optional[str] = None):
+    if patient_profiles_col is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    query = {}
+    if nurse_email:
+        query["registered_by"] = nurse_email
+
+    patients = list(patient_profiles_col.find(query).sort("created_at", -1))
+    return [
+        {
+            "id": str(p["_id"]),
+            "user_id": p.get("user_id", ""),
+            "name": p.get("name", ""),
+            "email": p.get("email", ""),
+            "phone": p.get("phone", ""),
+            "age": p.get("age", 0),
+            "gender": p.get("gender", ""),
+            "blood_group": p.get("blood_group", ""),
+            "address": p.get("address", ""),
+            "emergency_contact": p.get("emergency_contact", ""),
+            "date_of_birth": p.get("date_of_birth", ""),
+            "conditions": p.get("conditions", []),
+            "allergies": p.get("allergies", []),
+            "verified": p.get("verified", False),
+            "status": p.get("status", "active"),
+            "created_at": p.get("created_at", ""),
+        }
+        for p in patients
+    ]
+
+# ═══════════════════════════════════════════
 # PATIENT VITALS
 # ═══════════════════════════════════════════
 @router.post("/vitals")
@@ -243,6 +376,12 @@ def record_vitals(body: VitalRecord):
         "sugar_level": body.sugar_level,
         "temperature": body.temperature,
         "heart_rate": body.heart_rate,
+        "respiratory_rate": body.respiratory_rate,
+        "oxygen_saturation": body.oxygen_saturation,
+        "weight": body.weight,
+        "height": body.height,
+        "blood_sugar_fasting": body.blood_sugar_fasting,
+        "blood_sugar_pp": body.blood_sugar_pp,
         "notes": body.notes,
         "recorded_at": datetime.utcnow().isoformat(),
         "department": "",
@@ -273,6 +412,12 @@ def get_vitals(patient_email: Optional[str] = None, department: Optional[str] = 
                 "sugar_level": v.get("sugar_level"),
                 "temperature": v.get("temperature"),
                 "heart_rate": v.get("heart_rate"),
+                "respiratory_rate": v.get("respiratory_rate"),
+                "oxygen_saturation": v.get("oxygen_saturation"),
+                "weight": v.get("weight"),
+                "height": v.get("height"),
+                "blood_sugar_fasting": v.get("blood_sugar_fasting"),
+                "blood_sugar_pp": v.get("blood_sugar_pp"),
                 "notes": v.get("notes", ""),
                 "recorded_at": v.get("recorded_at", ""),
             }
