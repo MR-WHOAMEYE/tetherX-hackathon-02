@@ -9,6 +9,8 @@ import {
     Heart, UserPlus,
     // Patient
     CalendarCheck, User,
+    // AI Response Suggestions
+    MessageSquareText, Sparkles,
     // Shared
     LogOut
 } from 'lucide-react';
@@ -39,8 +41,12 @@ const allNavItems = [
     // ═══ PATIENT ═══
     { path: '/', icon: Heart, label: 'My Health', color: '#F59E0B', roles: ['patient'] },
     { path: '/book-appointment', icon: CalendarCheck, label: 'Book', color: '#3B82F6', roles: ['patient'] },
+    { path: '/patient-queries', icon: MessageSquareText, label: 'Queries', color: '#14B8A6', roles: ['patient'] },
     { path: '/profile', icon: User, label: 'Profile', color: '#8B5CF6', roles: ['patient'] },
     { path: '/reports', icon: FileText, label: 'Reports', color: '#10B981', roles: ['patient'] },
+
+    // ═══ AI RESPONSE SUGGESTIONS (Staff) ═══
+    { path: '/response-suggestions', icon: Sparkles, label: 'AI Resp', color: '#8B5CF6', roles: ['admin', 'doctor', 'nurse'] },
 ];
 
 export default function Sidebar({ user, onLogout }) {

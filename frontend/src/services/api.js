@@ -109,4 +109,17 @@ export const getNotifications = (doctorEmail, unreadOnly = false) =>
 export const markNotificationRead = (notifId) =>
     authApi.put(`/auth/notifications/${notifId}/read`);
 
+// Response Suggestions (AI-Based)
+export const submitPatientQuery = (data) => api.post('/response-suggestions/queries', data);
+export const getPatientQueries = (params = {}) => api.get('/response-suggestions/queries', { params });
+export const getPatientQuery = (id) => api.get(`/response-suggestions/queries/${id}`);
+export const generateDraft = (queryId) => api.post(`/response-suggestions/queries/${queryId}/generate-draft`);
+export const getDrafts = (params = {}) => api.get('/response-suggestions/drafts', { params });
+export const getDraft = (draftId) => api.get(`/response-suggestions/drafts/${draftId}`);
+export const reviewDraft = (draftId, data) => api.put(`/response-suggestions/drafts/${draftId}/review`, data);
+export const sendDraftResponse = (draftId, data = {}) => api.post(`/response-suggestions/drafts/${draftId}/send`, data);
+export const getKnowledgeArticles = (params = {}) => api.get('/response-suggestions/knowledge', { params });
+export const addKnowledgeArticle = (data) => api.post('/response-suggestions/knowledge', data);
+export const getResponseStats = () => api.get('/response-suggestions/stats');
+
 export default api;

@@ -28,13 +28,15 @@ import RegisterPatient from './pages/RegisterPatient';
 import PatientDashboard from './pages/PatientDashboard';
 import AppointmentBooking from './pages/AppointmentBooking';
 import PatientProfile from './pages/PatientProfile';
+import PatientQueries from './pages/PatientQueries';
+import ResponseSuggestions from './pages/ResponseSuggestions';
 
 // Role-based route permissions
 const ROLE_ROUTES = {
-  admin: ['/', '/operations', '/intelligence', '/simulation', '/strategy', '/reports', '/settings', '/admin/users'],
-  doctor: ['/', '/patient-management', '/appointment-management', '/reports'],
-  nurse: ['/', '/patient-vitals', '/register-patient', '/reports'],
-  patient: ['/', '/book-appointment', '/profile', '/reports'],
+  admin: ['/', '/operations', '/intelligence', '/simulation', '/strategy', '/reports', '/settings', '/admin/users', '/response-suggestions'],
+  doctor: ['/', '/patient-management', '/appointment-management', '/reports', '/response-suggestions'],
+  nurse: ['/', '/patient-vitals', '/register-patient', '/reports', '/response-suggestions'],
+  patient: ['/', '/book-appointment', '/profile', '/reports', '/patient-queries'],
 };
 
 function ProtectedRoute({ user, path, children }) {
@@ -93,6 +95,10 @@ export default function App() {
           {/* Patient */}
           <Route path="/book-appointment" element={<ProtectedRoute user={user} path="/book-appointment"><AppointmentBooking /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute user={user} path="/profile"><PatientProfile /></ProtectedRoute>} />
+          <Route path="/patient-queries" element={<ProtectedRoute user={user} path="/patient-queries"><PatientQueries /></ProtectedRoute>} />
+
+          {/* AI Response Suggestions (Staff) */}
+          <Route path="/response-suggestions" element={<ProtectedRoute user={user} path="/response-suggestions"><ResponseSuggestions /></ProtectedRoute>} />
 
           {/* Shared */}
           <Route path="/reports" element={<Reports />} />

@@ -57,6 +57,11 @@ patient_profiles_col = mdb["patient_profiles"] if mdb is not None else None
 appointments_col = mdb["appointments"] if mdb is not None else None
 cases_col = mdb["cases"] if mdb is not None else None
 
+# AI Response Suggestions collections
+patient_queries_col = mdb["patient_queries"] if mdb is not None else None
+draft_responses_col = mdb["draft_responses"] if mdb is not None else None
+knowledge_base_col = mdb["knowledge_base"] if mdb is not None else None
+
 # Aliases for backward compatibility
 feedback_col = patient_feedback_col  # Alias for admin_api
 profiles_col = patient_profiles_col   # Alias for admin_api
